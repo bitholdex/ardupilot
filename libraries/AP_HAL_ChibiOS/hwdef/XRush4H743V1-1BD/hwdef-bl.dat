@@ -1,0 +1,5 @@
+include ../XRush4H743V1-1/hwdef-bl.dat
+
+undef APJ_BOARD_ID
+
+APJ_BOARD_ID AP_HW_XRush4H743V1-1BD
