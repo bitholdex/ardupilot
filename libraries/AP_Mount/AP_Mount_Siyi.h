@@ -19,11 +19,9 @@
 
 #pragma once
 
-#include "AP_Mount_config.h"
+#include "AP_Mount_Backend_Serial.h"
 
 #if HAL_MOUNT_SIYI_ENABLED
-
-#include "AP_Mount_Backend_Serial.h"
 
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Math/AP_Math.h>
@@ -78,24 +76,8 @@ public:
     // primary and secondary sources use the AP_Camera::CameraSource enum cast to uint8_t
     bool set_camera_source(uint8_t primary_source, uint8_t secondary_source) override;
 
-    bool has_camera_information() const override { return true; }
-    // return camera vendor name
-    void get_camera_vendor_name(char *buf, uint8_t buflen) const override { strncpy(buf, "Siyi", buflen); }
-    // return camera model name
-    void get_camera_model_name(char *buf, uint8_t buflen) const override { strncpy(buf, get_model_name(), buflen); }
-    // return camera firmware version
-    uint32_t get_camera_firmware_version() const override {
-        return _fw_version.camera.major | (_fw_version.camera.minor << 8) | (_fw_version.camera.patch << 16);
-    }
-    // return focal length in mm for the current hardware model
-    float get_camera_focal_length_mm() const override;
-    // return camera capability flags
-    uint32_t get_camera_cap_flags() const override {
-        return (CAMERA_CAP_FLAGS_CAPTURE_VIDEO |
-                CAMERA_CAP_FLAGS_CAPTURE_IMAGE |
-                CAMERA_CAP_FLAGS_HAS_BASIC_ZOOM |
-                CAMERA_CAP_FLAGS_HAS_BASIC_FOCUS);
-    }
+    // send camera information message to GCS
+    void send_camera_information(mavlink_channel_t chan) const override;
 
     // send camera settings message to GCS
     void send_camera_settings(mavlink_channel_t chan) const override;
@@ -298,16 +280,13 @@ private:
     // Returns true if message successfully sent to Gimbal
     bool set_motion_mode(const GimbalMotionMode mode, const bool force=false);
 
-    // Siyi can send either rates or angles
-    uint8_t natively_supported_mount_target_types() const override {
-        return NATIVE_ANGLES_AND_RATES_ONLY;
-    };
-
     // send target pitch and yaw rates to gimbal
-    void send_target_rates(const MountRateTarget &rate_rads) override;
+    // yaw_is_ef should be true if yaw_rads target is an earth frame rate, false if body_frame
+    void send_target_rates(float pitch_rads, float yaw_rads, bool yaw_is_ef);
 
     // send target pitch and yaw angles to gimbal
-    void send_target_angles(const MountAngleTarget &angle_rad) override;
+    // yaw_is_ef should be true if yaw_rad target is an earth frame angle, false if body_frame
+    void send_target_angles(float pitch_rad, float yaw_rad, bool yaw_is_ef);
 
     // send zoom rate command to camera. zoom out = -1, hold = 0, zoom in = 1
     bool send_zoom_rate(float zoom_value);
@@ -340,7 +319,7 @@ private:
     // buffer holding bytes from latest packet.  This is only used to calculate the crc
     uint8_t _msg_buff[AP_MOUNT_SIYI_PACKETLEN_MAX];
     uint8_t _msg_buff_len;
-    static constexpr uint8_t _msg_buff_data_start = 8;         // data starts at this byte of _msg_buff
+    const uint8_t _msg_buff_data_start = 8;         // data starts at this byte of _msg_buff
 
     // parser state and unpacked fields
     struct PACKED {
@@ -402,4 +381,4 @@ private:
     uint8_t sent_time_count;
 };
 
-#endif // HAL_MOUNT_SIYI_ENABLED
+#endif // HAL_MOUNT_SIYISERIAL_ENABLED

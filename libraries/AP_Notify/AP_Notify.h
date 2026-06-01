@@ -14,12 +14,9 @@
  */
 #pragma once
 
-#include <AP_GPS/AP_GPS_FixType.h>
-
 #include <AP_Common/AP_Common.h>
 #include <AP_Param/AP_Param.h>
 #include "AP_Notify_config.h"
-#include <AP_IOMCU/AP_IOMCU.h>
 
 #include "NotifyDevice.h"
 
@@ -101,9 +98,6 @@ public:
 #if AP_NOTIFY_NEOPIXEL_ENABLED
         Notify_LED_NeoPixelRGB              = (1 << 18), // NeoPixel AdaFruit 4544 Worldsemi WS2811
 #endif
-#if HAL_WITH_IO_MCU && AP_IOMCU_PROFILED_SUPPORT_ENABLED
-        Notify_LED_ProfiLED_IOMCU           = (1 << 19), // ProfiLED IOMCU
-#endif
         Notify_LED_MAX
     };
 
@@ -117,7 +111,7 @@ public:
     /// notify_flags_type - bitmask of notification flags
     struct notify_flags_and_values_type {
         bool initialising;        // true if initialising and the vehicle should not be moved
-        AP_GPS_FixType gps_status; // GPS fix type
+        uint8_t gps_status;       // see the GPS_0 = no gps, 1 = no lock, 2 = 2d lock, 3 = 3d lock, 4 = dgps lock, 5 = rtk lock
         uint8_t gps_num_sats;     // number of sats
         uint8_t flight_mode;      // flight mode
         bool armed;               // 0 = disarmed, 1 = armed

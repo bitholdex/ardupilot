@@ -34,8 +34,6 @@ extern const AP_HAL::HAL& hal;
 
 #include "RC_Channel.h"
 
-#include <AP_Arming/AP_Arming.h>
-
 /*
   channels group object constructor
  */
@@ -60,17 +58,6 @@ void RC_Channels::init(void)
     init_aux_all();
 }
 
-bool RC_Channels::has_valid_input() const
-{
-    // the vehicles override this method and check many more
-    // things, but also call this method:
-    if (!has_ever_seen_rc_input()) {
-        return false;
-    }
-
-    return true;
-}
-
 uint8_t RC_Channels::get_radio_in(uint16_t *chans, const uint8_t num_channels)
 {
     memset(chans, 0, num_channels*sizeof(*chans));
@@ -86,8 +73,7 @@ uint8_t RC_Channels::get_radio_in(uint16_t *chans, const uint8_t num_channels)
 // update all the input channels
 bool RC_Channels::read_input(void)
 {
-    if (hal.rcin->new_input() &&
-        !rc().option_is_enabled(RC_Channels::Option::IGNORE_RECEIVER)) {
+    if (hal.rcin->new_input()) {
         _has_had_rc_receiver = true;
     } else if (!has_new_overrides) {
         return false;
@@ -102,10 +88,6 @@ bool RC_Channels::read_input(void)
     bool success = false;
     for (uint8_t i=0; i<NUM_RC_CHANNELS; i++) {
         success |= channel(i)->update();
-    }
-
-    if (success) {
-        rudder_arm_disarm_check();
     }
 
     return success;
@@ -167,6 +149,11 @@ bool RC_Channels::has_active_overrides()
     return false;
 }
 
+bool RC_Channels::receiver_bind(const int dsmMode)
+{
+    return hal.rcin->rc_bind(dsmMode);
+}
+
 
 // support for auxiliary switches:
 // read_aux_switches - checks aux switch positions and invokes configured actions
@@ -208,7 +195,7 @@ void RC_Channels::init_aux_all()
 //
 // Support for mode switches
 //
-RC_Channel *RC_Channels::flight_mode_channel()
+RC_Channel *RC_Channels::flight_mode_channel() const
 {
     const int8_t num = flight_mode_channel_number();
     if (num <= 0) {
@@ -217,16 +204,7 @@ RC_Channel *RC_Channels::flight_mode_channel()
     if (num >= NUM_RC_CHANNELS) {
         return nullptr;
     }
-    return channel(num-1);
-}
-const RC_Channel *RC_Channels::flight_mode_channel() const
-{
-    const int8_t num = flight_mode_channel_number();
-    if (num <= 0) {
-        // avoid integer underflow on e.g. -1
-        return nullptr;
-    }
-    return channel(num-1);
+    return rc_channel(num-1);
 }
 
 void RC_Channels::reset_mode_switch()
@@ -255,7 +233,7 @@ void RC_Channels::read_mode_switch()
 // return true if assigned
 bool RC_Channels::flight_mode_channel_conflicts_with_rc_option() const
 {
-    const RC_Channel *chan = flight_mode_channel();
+    RC_Channel *chan = flight_mode_channel();
     if (chan == nullptr) {
         return false;
     }
@@ -269,7 +247,7 @@ bool RC_Channels::flight_mode_channel_conflicts_with_rc_option() const
 */
 bool RC_Channels::get_pwm(uint8_t c, uint16_t &pwm) const
 {
-    const RC_Channel *chan = channel(c-1);
+    RC_Channel *chan = rc_channel(c-1);
     if (chan == nullptr) {
         return false;
     }
@@ -336,138 +314,32 @@ void RC_Channels::set_aux_cached(RC_Channel::AUX_FUNC aux_fn, RC_Channel::AuxSwi
 // allow use of the pointer without checking it for null-ness.  If an
 // invalid option has been chosen somehow then the returned channel
 // will be a dummy channel.
-static RC_Channel dummy_rcchannel;
-const RC_Channel &RC_Channels::get_rcmap_channel_nonnull(uint8_t rcmap_number) const
-{
-    const RC_Channel *ret = channel(rcmap_number-1);
-    if (ret != nullptr) {
-        return *ret;
-    }
-    return dummy_rcchannel;
-}
 RC_Channel &RC_Channels::get_rcmap_channel_nonnull(uint8_t rcmap_number)
 {
-    RC_Channel *ret = channel(rcmap_number-1);
+    RC_Channel *ret = RC_Channels::rc_channel(rcmap_number-1);
     if (ret != nullptr) {
         return *ret;
     }
     return dummy_rcchannel;
 }
-const RC_Channel &RC_Channels::get_roll_channel() const
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->roll());
-};
 RC_Channel &RC_Channels::get_roll_channel()
 {
     return get_rcmap_channel_nonnull(AP::rcmap()->roll());
-};
-const RC_Channel &RC_Channels::get_pitch_channel() const
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->pitch());
 };
 RC_Channel &RC_Channels::get_pitch_channel()
 {
     return get_rcmap_channel_nonnull(AP::rcmap()->pitch());
 };
-const RC_Channel &RC_Channels::get_throttle_channel() const
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->throttle());
-};
 RC_Channel &RC_Channels::get_throttle_channel()
 {
     return get_rcmap_channel_nonnull(AP::rcmap()->throttle());
-};
-const RC_Channel &RC_Channels::get_yaw_channel() const
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->yaw());
 };
 RC_Channel &RC_Channels::get_yaw_channel()
 {
     return get_rcmap_channel_nonnull(AP::rcmap()->yaw());
 };
-const RC_Channel &RC_Channels::get_forward_channel() const
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->forward());
-};
-RC_Channel &RC_Channels::get_forward_channel()
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->forward());
-};
-const RC_Channel &RC_Channels::get_lateral_channel() const
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->lateral());
-};
-RC_Channel &RC_Channels::get_lateral_channel()
-{
-    return get_rcmap_channel_nonnull(AP::rcmap()->lateral());
-};
 #endif  // AP_RCMAPPER_ENABLED
 
-
-/*
-  check for pilot input on rudder stick for arming/disarming
-*/
-void RC_Channels::rudder_arm_disarm_check()
-{
-    // run no more code if arm/disarm via rudder input channel is
-    // completely disabled.  Further checks using this parameter are
-    // done below.
-    if (AP::arming().get_rudder_arming_type() == AP_Arming::RudderArming::IS_DISABLED) {
-        return;
-    }
-
-    const RC_Channel *channel = get_arming_channel();
-    if (channel == nullptr) {
-        return;
-    }
-
-    const auto control_in = channel->get_control_in();
-    const auto abs_control_in = abs(control_in);
-
-    if (abs_control_in == 0) {
-        have_seen_neutral_rudder = true;
-    }
-
-    if (abs_control_in <= 4000) {
-        // not trying to (or no longer trying to) arm or disarm
-        rudder_arm_timer = 0;
-        return;
-    }
-
-    // enforce correct stick gesture for arming (but not disarming):
-    if (arming_check_throttle() && control_in > 4000) {
-        // only permit arming if the vehicle isn't being commanded to
-        // move via RC input
-        const auto &c = rc().get_throttle_channel();
-        if (c.get_control_in() != 0) {
-            rudder_arm_timer = 0;
-            return;
-        }
-    }
-
-    const uint32_t now = AP_HAL::millis();
-    if (rudder_arm_timer == 0) {
-        // first time we've seen the attempt
-        rudder_arm_timer = now;
-        return;
-    }
-
-    if (now - rudder_arm_timer < 3000) {
-        // not time yet....
-        return;
-    }
-
-    // time to try to arm or disarm:
-    rudder_arm_timer = 0;
-    if (control_in > 4000) {
-        AP::arming().arm(AP_Arming::Method::RUDDER);
-        have_seen_neutral_rudder = false;
-    } else {
-        if (AP::arming().get_rudder_arming_type() == AP_Arming::RudderArming::ARMDISARM) {
-            AP::arming().disarm(AP_Arming::Method::RUDDER);
-        }
-    }
-}
 
 // singleton instance
 RC_Channels *RC_Channels::_singleton;

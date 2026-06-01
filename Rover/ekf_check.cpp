@@ -19,7 +19,6 @@
 static struct {
     uint8_t fail_count;         // number of iterations ekf or dcm have been out of tolerances
     uint8_t bad_variance : 1;   // true if ekf should be considered untrusted (fail_count has exceeded EKF_CHECK_ITERATIONS_MAX)
-    bool has_ever_passed;       // true if the ekf checks have ever passed
     uint32_t last_warn_time;    // system time of last warning in milliseconds.  Used to throttle text warnings sent to GCS
 } ekf_check_state;
 
@@ -43,17 +42,7 @@ void Rover::ekf_check()
     }
 
     // compare compass and velocity variance vs threshold
-    const bool over_threshold = ekf_over_threshold();
-    const bool position_ok = ekf_position_ok();
-    const bool checks_passed = !over_threshold && position_ok;
-
-    // return if ekf checks have never passed
-    ekf_check_state.has_ever_passed |= checks_passed;
-    if (!ekf_check_state.has_ever_passed) {
-        return;
-    }
-
-    if (over_threshold) {
+    if (ekf_over_threshold()) {
         // if compass is not yet flagged as bad
         if (!ekf_check_state.bad_variance) {
             // increase counter
@@ -68,7 +57,7 @@ void Rover::ekf_check()
                                          LogErrorCode::EKFCHECK_BAD_VARIANCE);
                 // send message to gcs
                 if ((AP_HAL::millis() - ekf_check_state.last_warn_time) > EKF_CHECK_WARNING_TIME) {
-                    GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL,"EKF variance");
+                    gcs().send_text(MAV_SEVERITY_CRITICAL,"EKF variance");
                     ekf_check_state.last_warn_time = AP_HAL::millis();
                 }
                 failsafe_ekf_event();
@@ -188,7 +177,7 @@ void Rover::failsafe_ekf_event()
             break;
     }
 
-    GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL,"EKF failsafe");
+    gcs().send_text(MAV_SEVERITY_CRITICAL,"EKF failsafe");
 }
 
 // failsafe_ekf_off_event - actions to take when EKF failsafe is cleared
@@ -202,5 +191,5 @@ void Rover::failsafe_ekf_off_event(void)
     failsafe.ekf = false;
     LOGGER_WRITE_ERROR(LogErrorSubsystem::FAILSAFE_EKFINAV,
                              LogErrorCode::FAILSAFE_RESOLVED);
-    GCS_SEND_TEXT(MAV_SEVERITY_CRITICAL,"EKF failsafe cleared");
+    gcs().send_text(MAV_SEVERITY_CRITICAL,"EKF failsafe cleared");
 }

@@ -1,12 +1,16 @@
 --[[
  support package place for quadplanes
 --]]
+-- luacheck: only 0
+---@diagnostic disable: param-type-mismatch
+
 
 local PARAM_TABLE_KEY = 9
 local PARAM_TABLE_PREFIX = "PKG_"
 
 local MODE_AUTO = 10
 
+local NAV_TAKEOFF = 22
 local NAV_VTOL_PAYLOAD_PLACE = 94
 
 -- add a parameter and bind it to a variable
@@ -22,11 +26,12 @@ local PKG_RELEASE_FUNC  = bind_add_param('RELEASE_FUNC', 2, 94)
 local PKG_RELEASE_HGT   = bind_add_param('RELEASE_HGT',  3, 10)
 local PKG_RELEASE_HOLD  = bind_add_param('RELEASE_HOLD', 4, 1)
 
-local Q_LAND_FINAL_SPD = Parameter("Q_LAND_FINAL_SPD")
+local Q_LAND_SPEED = Parameter("Q_LAND_SPEED")
 local Q_LAND_FINAL_ALT = Parameter("Q_LAND_FINAL_ALT")
 
 local MAV_SEVERITY_INFO = 6
 local MAV_SEVERITY_NOTICE = 5
+local MAV_SEVERITY_EMERGENCY = 0
 
 local RNG_ORIENT_DOWN = 25
 
@@ -108,7 +113,7 @@ function update()
    -- check the distance, if less than RNG_ORIENT_DOWN then release
    local dist_m
    if not landed then
-      dist_m = rangefinder:distance_orient(RNG_ORIENT_DOWN)
+      dist_m = rangefinder:distance_cm_orient(RNG_ORIENT_DOWN) * 0.01
    else
       dist_m = 0.0
    end
@@ -116,7 +121,7 @@ function update()
    -- slow down when within Q_LAND_FINAL_ALT of target
    local remaining_m = dist_m - PKG_RELEASE_HGT:get()
    if remaining_m > 0 and remaining_m < Q_LAND_FINAL_ALT:get() then
-      vehicle:set_land_descent_rate(Q_LAND_FINAL_SPD:get())
+      vehicle:set_land_descent_rate(Q_LAND_SPEED:get()*0.01)
    end
 
    if remaining_m <= 0 then

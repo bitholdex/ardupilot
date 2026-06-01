@@ -23,7 +23,6 @@ class AP_Camera_Mount;
 class AP_Camera_MAVLink;
 class AP_Camera_MAVLinkCamV2;
 class AP_Camera_Scripting;
-class AP_RunCam;
 
 /// @class	Camera
 /// @brief	Object managing a Photo or video camera
@@ -38,7 +37,6 @@ class AP_Camera {
     friend class AP_Camera_MAVLink;
     friend class AP_Camera_MAVLinkCamV2;
     friend class AP_Camera_Scripting;
-    friend class AP_RunCam;
 
 public:
 
@@ -75,9 +73,6 @@ public:
 #if AP_CAMERA_SCRIPTING_ENABLED
         SCRIPTING = 7,  // Scripting backend
 #endif
-#if AP_CAMERA_RUNCAM_ENABLED
-        RUNCAM = 8,  // RunCam backend
-#endif
     };
 
     // detect and initialise backends
@@ -86,7 +81,6 @@ public:
     // update - to be called periodically at 50Hz
     void update();
 
-#if HAL_GCS_ENABLED
     // handle MAVLink messages from the camera
     void handle_message(mavlink_channel_t chan, const mavlink_message_t &msg);
 
@@ -97,19 +91,6 @@ public:
     // send the message, true otherwise
     bool send_mavlink_message(class GCS_MAVLINK &link, const enum ap_message id);
 
-    // send camera information for a specific instance (0-based) to GCS
-    void send_camera_information(uint8_t instance, mavlink_channel_t chan);
-#endif  // HAL_GCS_ENABLED
-
-#if HAL_MAVLINK_BINDINGS_ENABLED
-    // methods to handle mavlink-style instance-id (0 meaning all cameras)
-    MAV_RESULT handle_mav_DO_SET_CAM_TRIGG_DISTANCE(uint8_t instance_id, bool trigger, float dist_m);
-    MAV_RESULT handle_mav_SET_CAMERA_ZOOM(uint8_t instance_id, CAMERA_ZOOM_TYPE mav_zoom_type, float zoom_value);
-#endif  // HAL_MAVLINK_BINDINGS_ENABLED
-
-    // select which instance to send on the next deferred MSG_CAMERA_INFORMATION send
-    void set_camera_information_send_instance(int16_t instance) { _camera_information_send_instance = instance; }
-
     // configure camera
     void configure(float shooting_mode, float shutter_speed, float aperture, float ISO, int32_t exposure_type, int32_t cmd_id, float engine_cutoff_time);
     void configure(uint8_t instance, float shooting_mode, float shutter_speed, float aperture, float ISO, int32_t exposure_type, int32_t cmd_id, float engine_cutoff_time);
@@ -119,6 +100,7 @@ public:
     void control(uint8_t instance, float session, float zoom_pos, float zoom_step, float focus_lock, int32_t shooting_cmd, int32_t cmd_id);
 
     // set camera trigger distance in a mission
+    void set_trigger_distance(float distance_m);
     void set_trigger_distance(uint8_t instance, float distance_m);
 
     // momentary switch to change camera between picture and video modes
@@ -234,11 +216,6 @@ protected:
 
     // parameters for backends
     AP_Camera_Params _params[AP_CAMERA_MAX_INSTANCES];
-#if AP_CAMERA_RUNCAM_ENABLED
-    // var info pointer for RunCam
-    static const struct AP_Param::GroupInfo *_backend_var_info[AP_CAMERA_MAX_INSTANCES];
-    uint8_t _runcam_instances;
-#endif
 
 private:
 
@@ -253,9 +230,6 @@ private:
 
     // perform any required parameter conversion
     void convert_params();
-#if AP_CAMERA_RUNCAM_ENABLED && (AP_CAMERA_MAX_INSTANCES > 1)
-    void convert_runcam_params();
-#endif // AP_CAMERA_RUNCAM_ENABLED && (AP_CAMERA_MAX_INSTANCES > 1)
 
     // send camera feedback message to GCS
     void send_feedback(mavlink_channel_t chan);
@@ -288,10 +262,6 @@ private:
     bool _is_in_auto_mode;              // true if in AUTO mode
     uint32_t log_camera_bit;            // logging bit (from LOG_BITMASK) to enable camera logging
     AP_Camera_Backend *_backends[AP_CAMERA_MAX_INSTANCES];  // pointers to instantiated backends
-    // Stashes the 0-based instance requested by MAV_CMD_REQUEST_MESSAGE(CAMERA_INFORMATION, param2).
-    // Used to pass the target instance through the deferred-message path so that COMMAND_ACK is
-    // transmitted before the CAMERA_INFORMATION response.  -1 means send for all instances.
-    int16_t _camera_information_send_instance = -1;
 };
 
 namespace AP {

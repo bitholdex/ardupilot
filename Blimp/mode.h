@@ -18,7 +18,6 @@ public:
         VELOCITY =      2,  // velocity mode
         LOITER =        3,  // loiter mode (position hold)
         RTL =           4,  // rtl
-        // Mode number 30 reserved for "offboard" for external/lua control.
     };
 
     // constructor
@@ -53,9 +52,6 @@ public:
     virtual const char *name() const = 0;
     virtual const char *name4() const = 0;
 
-    // returns a unique number specific to this mode
-    virtual Mode::Number number() const = 0;
-
     virtual bool is_landing() const
     {
         return false;
@@ -76,11 +72,11 @@ public:
     {
         return 0;
     }
-    virtual float wp_distance_m() const
+    virtual uint32_t wp_distance() const
     {
-        return 0.0f;
+        return 0;
     }
-    virtual float crosstrack_error_m() const
+    virtual float crosstrack_error() const
     {
         return 0.0f;
     }
@@ -106,6 +102,7 @@ protected:
     // convenience references to avoid code churn in conversion:
     Parameters &g;
     ParametersG2 &g2;
+    AP_InertialNav &inertial_nav;
     AP_AHRS &ahrs;
     Fins *&motors;
     Loiter *&loiter;
@@ -155,14 +152,12 @@ protected:
 
     const char *name() const override
     {
-        return "Manual";
+        return "MANUAL";
     }
     const char *name4() const override
     {
         return "MANU";
     }
-
-    Mode::Number number() const override { return Mode::Number::MANUAL; }
 
 private:
 
@@ -199,14 +194,12 @@ protected:
 
     const char *name() const override
     {
-        return "Velocity";
+        return "VELOCITY";
     }
     const char *name4() const override
     {
         return "VELY";
     }
-
-    Mode::Number number() const override { return Mode::Number::VELOCITY; }
 
 private:
 
@@ -244,14 +237,12 @@ protected:
 
     const char *name() const override
     {
-        return "Loiter";
+        return "LOITER";
     }
     const char *name4() const override
     {
         return "LOIT";
     }
-
-    Mode::Number number() const override { return Mode::Number::LOITER; }
 
 private:
     Vector3f target_pos;
@@ -288,14 +279,12 @@ protected:
 
     const char *name() const override
     {
-        return "Land";
+        return "LAND";
     }
     const char *name4() const override
     {
         return "LAND";
     }
-
-    Mode::Number number() const override { return Mode::Number::LAND; }
 
 private:
 
@@ -339,7 +328,4 @@ protected:
     {
         return "RTL";
     }
-
-    Mode::Number number() const override { return Mode::Number::RTL; }
-
 };

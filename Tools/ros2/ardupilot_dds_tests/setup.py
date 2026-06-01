@@ -1,7 +1,5 @@
 import os
-
 from glob import glob
-
 from setuptools import setup
 
 package_name = 'ardupilot_dds_tests'
@@ -23,11 +21,7 @@ setup(
     maintainer_email='maintainer@ardupilot.org',
     description='Tests for the ArduPilot AP_DDS library',
     license='GPL-3.0',
-    extras_require={
-        'test': [
-            'pytest',
-        ],
-    },
+    tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             "time_listener = ardupilot_dds_tests.time_listener:main",

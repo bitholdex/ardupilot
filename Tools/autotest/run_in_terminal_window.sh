@@ -29,7 +29,7 @@ if [ -n "$SITL_RITW_TERMINAL" ]; then
   chmod +x "$FILEPATH"
   $SITL_RITW_TERMINAL "$FILEPATH" &
 elif [ -n "$TMUX" ]; then
-  tmux new-window -dn "$name" "$TMUX_PREFIX $*"
+  tmux new-window -dn "$name" "$*"
 elif [ -n "$DISPLAY" -a -n "$(which osascript)" ]; then
   osascript -e 'tell application "Terminal" to do script "'"cd $(pwd) && clear && $* "'"'
 elif [ -n "$DISPLAY" -a -n "$(which xterm)" ]; then
@@ -47,9 +47,6 @@ elif [ -n "$STY" ]; then
 elif [ -n "$ZELLIJ" ]; then
   # Create a new pane to run
   zellij run -n "$name" -- "$1" "${@:2}"
-elif [ -n "$(which mintty 2>/dev/null)" ]; then
-  # Cygwin native terminal - no X11 fonts required
-  mintty --hold always -T "$name" -e "$@" &
 else
   filename="/tmp/$name.log"
   echo "RiTW: Window access not found, logging to $filename"

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 
 #include <AP_AHRS/AP_AHRS.h>
+#include <AP_Compass/AP_Compass.h>
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Math/AP_Math.h>
 #include <AP_Param/AP_Param.h>
@@ -17,7 +18,6 @@
 #include "AP_Logger_File.h"
 #include "AP_Logger_MAVLink.h"
 #include "LoggerMessageWriter.h"
-#include <AP_RCProtocol/AP_RCProtocol.h>
 
 extern const AP_HAL::HAL& hal;
 
@@ -170,11 +170,6 @@ void AP_Logger::Write_RCIN(void)
     if (rc().in_rc_failsafe()) {
         flags |= (uint8_t)AP_Logger::RCLoggingFlags::IN_RC_FAILSAFE;
     }
-#if AP_RCPROTOCOL_ENABLED
-    if (AP::RC().failsafe_active()) {
-        flags |= (uint8_t)AP_Logger::RCLoggingFlags::RC_PROTOCOL_FAILSAFE;
-    }
-#endif  // AP_RCPROTOCOL_ENABLED
 
     const struct log_RCI2 pkt2{
         LOG_PACKET_HEADER_INIT(LOG_RCI2_MSG),
@@ -339,37 +334,13 @@ bool AP_Logger_Backend::Write_EntireMission()
 // Write a text message to the log
 bool AP_Logger_Backend::Write_Message(const char *message)
 {
-    // i==0 here means we log an empty string if it is passed in:
-    const uint8_t id = AP::logger().get_MSG_id();  // there is a race condition on this ID; if a thread logs a message at the same time as the main thread then we can re-use this
-
-    uint8_t chunk_seq = 0;
-    for (uint8_t i=0; i == 0 || i<strlen(message); i += 64, chunk_seq++) {
-        const bool success = Write_MessageChunk(id, &message[i], chunk_seq);
-        if (i == 0 && !success) {
-            return false;
-        }
-    }
-    return true;
-}
-bool AP_Logger_Backend::Write_MessageChunk(uint8_t id, const char *messagechunk, uint8_t chunk_seq)
-{
-    struct log_MSG pkt{
-        LOG_PACKET_HEADER_INIT(LOG_MSG_MSG),
+    struct log_Message pkt{
+        LOG_PACKET_HEADER_INIT(LOG_MESSAGE_MSG),
         time_us : AP_HAL::micros64(),
-        id           : id,
-        chunk_seq : chunk_seq,
         msg  : {}
     };
-    const uint16_t remaining = strlen(messagechunk);
-    strncpy_noterm(pkt.msg, messagechunk, MIN(sizeof(pkt.msg), remaining));
-    // result comes from success writing the first chunk; this
-    // prevents trying to write out the front of a message
-    // repeatedly.
-    const bool success = WriteCriticalBlock(&pkt, sizeof(pkt));
-    if (chunk_seq == 0) {
-        return success;
-    }
-    return true;
+    strncpy_noterm(pkt.msg, message, sizeof(pkt.msg));
+    return WriteCriticalBlock(&pkt, sizeof(pkt));
 }
 
 void AP_Logger::Write_Power(void)
@@ -431,6 +402,42 @@ void AP_Logger::Write_Radio(const mavlink_radio_t &packet)
     WriteBlock(&pkt, sizeof(pkt));
 }
 
+void AP_Logger::Write_Compass_instance(const uint64_t time_us, const uint8_t mag_instance)
+{
+    const Compass &compass = AP::compass();
+
+    const Vector3f &mag_field = compass.get_field(mag_instance);
+    const Vector3f &mag_offsets = compass.get_offsets(mag_instance);
+    const Vector3f &mag_motor_offsets = compass.get_motor_offsets(mag_instance);
+    const struct log_MAG pkt{
+        LOG_PACKET_HEADER_INIT(LOG_MAG_MSG),
+        time_us         : time_us,
+        instance        : mag_instance,
+        mag_x           : (int16_t)mag_field.x,
+        mag_y           : (int16_t)mag_field.y,
+        mag_z           : (int16_t)mag_field.z,
+        offset_x        : (int16_t)mag_offsets.x,
+        offset_y        : (int16_t)mag_offsets.y,
+        offset_z        : (int16_t)mag_offsets.z,
+        motor_offset_x  : (int16_t)mag_motor_offsets.x,
+        motor_offset_y  : (int16_t)mag_motor_offsets.y,
+        motor_offset_z  : (int16_t)mag_motor_offsets.z,
+        health          : (uint8_t)compass.healthy(mag_instance),
+        SUS             : compass.last_update_usec(mag_instance)
+    };
+    WriteBlock(&pkt, sizeof(pkt));
+}
+
+// Write a Compass packet
+void AP_Logger::Write_Compass()
+{
+    const uint64_t time_us = AP_HAL::micros64();
+    const Compass &compass = AP::compass();
+    for (uint8_t i=0; i<compass.get_count(); i++) {
+        Write_Compass_instance(time_us, i);
+    }
+}
+
 // Write a mode packet.
 bool AP_Logger_Backend::Write_Mode(uint8_t mode, const ModeReason reason)
 {
@@ -445,23 +452,30 @@ bool AP_Logger_Backend::Write_Mode(uint8_t mode, const ModeReason reason)
     return WriteCriticalBlock(&pkt, sizeof(pkt));
 }
 
-
-// emit an RTC message to the onboard logs
-#if AP_RTC_LOGGING_ENABLED
-bool AP_Logger_Backend::Write_RTC()
+/*
+  write servo status from CAN servo
+ */
+void AP_Logger::Write_ServoStatus(uint64_t time_us, uint8_t id, float position, float force, float speed, uint8_t power_pct,
+                                  float pos_cmd, float voltage, float current, float mot_temp, float pcb_temp, uint8_t error)
 {
-    uint64_t time_unix = 0;
-    AP::rtc().get_utc_usec(time_unix); // may fail, leaving time_unix at 0
-
-    const struct log_RTC pkt{
-        LOG_PACKET_HEADER_INIT(LOG_RTC_MSG),
-        time_us  : AP_HAL::micros64(),
-        epoch_us : time_unix,
-        source_type: uint8_t(AP::rtc().get_source_type()),
+    const struct log_CSRV pkt {
+        LOG_PACKET_HEADER_INIT(LOG_CSRV_MSG),
+        time_us     : time_us,
+        id          : id,
+        position    : position,
+        force       : force,
+        speed       : speed,
+        power_pct   : power_pct,
+        pos_cmd     : pos_cmd,
+        voltage     : voltage,
+        current     : current,
+        mot_temp    : mot_temp,
+        pcb_temp    : pcb_temp,
+        error       : error,
     };
-    return WriteCriticalBlock(&pkt, sizeof(pkt));
+    WriteBlock(&pkt, sizeof(pkt));
 }
-#endif  // AP_RTC_LOGGING_ENABLED
+
 
 // Write a Yaw PID packet
 void AP_Logger::Write_PID(uint8_t msg_type, const AP_PIDInfo &info)

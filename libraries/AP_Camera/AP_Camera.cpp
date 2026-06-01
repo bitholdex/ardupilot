@@ -6,7 +6,6 @@
 #include <AP_Math/AP_Math.h>
 #include <AP_HAL/AP_HAL.h>
 #include <SRV_Channel/SRV_Channel.h>
-#include <AP_Vehicle/AP_Vehicle.h>
 #include "AP_Camera_Backend.h"
 #include "AP_Camera_Servo.h"
 #include "AP_Camera_Relay.h"
@@ -15,7 +14,6 @@
 #include "AP_Camera_MAVLink.h"
 #include "AP_Camera_MAVLinkCamV2.h"
 #include "AP_Camera_Scripting.h"
-#include "AP_RunCam.h"
 
 const AP_Param::GroupInfo AP_Camera::var_info[] = {
 
@@ -43,23 +41,9 @@ const AP_Param::GroupInfo AP_Camera::var_info[] = {
     // @Path: AP_Camera_Params.cpp
     AP_SUBGROUPINFO(_params[1], "2", 13, AP_Camera, AP_Camera_Params),
 #endif
-#if AP_CAMERA_RUNCAM_ENABLED
-    // @Group: 1_RC_
-    // @Path: AP_RunCam.cpp
-    AP_SUBGROUPVARPTR(_backends[0], "1_RC_", 14, AP_Camera, _backend_var_info[0]),
 
-#if AP_CAMERA_MAX_INSTANCES > 1
-    // @Group: 2_RC_
-    // @Path: AP_RunCam.cpp
-    AP_SUBGROUPVARPTR(_backends[1], "2_RC_", 15, AP_Camera, _backend_var_info[1]),
-#endif
-#endif
     AP_GROUPEND
 };
-
-#if AP_CAMERA_RUNCAM_ENABLED
-const AP_Param::GroupInfo *AP_Camera::_backend_var_info[AP_CAMERA_MAX_INSTANCES];
-#endif
 
 extern const AP_HAL::HAL& hal;
 
@@ -68,6 +52,17 @@ AP_Camera::AP_Camera(uint32_t _log_camera_bit) :
 {
     AP_Param::setup_object_defaults(this, var_info);
     _singleton = this;
+}
+
+// set camera trigger distance in a mission
+void AP_Camera::set_trigger_distance(float distance_m)
+{
+    WITH_SEMAPHORE(_rsem);
+
+    if (primary == nullptr) {
+        return;
+    }
+    primary->set_trigger_distance(distance_m);
 }
 
 // momentary switch to change camera between picture and video modes
@@ -200,9 +195,6 @@ void AP_Camera::init()
 
     // perform any required parameter conversion
     convert_params();
-#if AP_CAMERA_RUNCAM_ENABLED && (AP_CAMERA_MAX_INSTANCES > 1)
-    convert_runcam_params();
-#endif // AP_CAMERA_RUNCAM_ENABLED && (AP_CAMERA_MAX_INSTANCES > 1)
 
     // create each instance
     for (uint8_t instance = 0; instance < AP_CAMERA_MAX_INSTANCES; instance++) {
@@ -247,17 +239,6 @@ void AP_Camera::init()
             _backends[instance] = NEW_NOTHROW AP_Camera_Scripting(*this, _params[instance], instance);
             break;
 #endif
-#if AP_CAMERA_RUNCAM_ENABLED
-        // check for RunCam driver
-        case CameraType::RUNCAM:
-            if (_backends[instance] == nullptr) { // may have already been created by the conversion code
-                _backends[instance] = NEW_NOTHROW AP_RunCam(*this, _params[instance], instance, _runcam_instances);
-                _backend_var_info[instance] = AP_RunCam::var_info;
-                AP_Param::load_object_from_eeprom(_backends[instance], _backend_var_info[instance]);
-                _runcam_instances++;
-            }
-            break;
-#endif
         case CameraType::NONE:
             break;
         }
@@ -297,62 +278,6 @@ void AP_Camera::handle_message(mavlink_channel_t chan, const mavlink_message_t &
     }
 }
 
-#if HAL_MAVLINK_BINDINGS_ENABLED
-// a method which handles mavlink-style semantics for instance_id; if
-// instance_id is zero or matches backend instance ID code is run
-MAV_RESULT AP_Camera::handle_mav_DO_SET_CAM_TRIGG_DISTANCE(uint8_t instance_id, bool trigger, float dist_m)
-{
-    for (uint8_t i=0; i<AP_CAMERA_MAX_INSTANCES; i++) {
-        if (_backends[i] == nullptr) {
-            continue;
-        }
-        // honour packet instance number:
-        if (instance_id != 0 && i+1 != instance_id) {
-            continue;
-        }
-        _backends[i]->set_trigger_distance(dist_m);
-        if (trigger) {
-            _backends[i]->take_picture();
-        }
-    }
-
-    return MAV_RESULT_ACCEPTED;
-}
-
-MAV_RESULT AP_Camera::handle_mav_SET_CAMERA_ZOOM(uint8_t instance_id, CAMERA_ZOOM_TYPE mav_zoom_type, float zoom_value)
-{
-    ZoomType zoom_type;
-    switch (mav_zoom_type) {
-    case ZOOM_TYPE_CONTINUOUS:
-        zoom_type = ZoomType::RATE;
-        break;
-    case ZOOM_TYPE_RANGE:
-        zoom_type = ZoomType::PCT;
-        break;
-    default:
-        // invalid param1
-        return MAV_RESULT_DENIED;
-    }
-
-    MAV_RESULT result = MAV_RESULT_ACCEPTED;
-    for (uint8_t i=0; i<AP_CAMERA_MAX_INSTANCES; i++) {
-        if (_backends[i] == nullptr) {
-            continue;
-        }
-        // honour packet instance number:
-        if (instance_id != 0 && i+1 != instance_id) {
-            continue;
-        }
-        // all backends must succeed:
-        if (!_backends[i]->set_zoom(zoom_type, zoom_value)) {
-            result = MAV_RESULT_FAILED;
-        }
-    }
-
-    return result;
-}
-#endif  // HAL_MAVLINK_BINDINGS_ENABLED
-
 // handle command_long mavlink messages
 MAV_RESULT AP_Camera::handle_command(const mavlink_command_int_t &packet)
 {
@@ -364,17 +289,21 @@ MAV_RESULT AP_Camera::handle_command(const mavlink_command_int_t &packet)
         control(packet.param1, packet.param2, packet.param3, packet.param4, packet.x, packet.y);
         return MAV_RESULT_ACCEPTED;
     case MAV_CMD_DO_SET_CAM_TRIGG_DIST:
-        return handle_mav_DO_SET_CAM_TRIGG_DISTANCE(
-            packet.param4,                  // instance
-            is_equal(packet.param3, 1.0f),  // trigger
-            packet.param1                   // distance
-        );
+        set_trigger_distance(packet.param1);
+        if (is_equal(packet.param3, 1.0f)) {
+            take_picture();
+        }
+        return MAV_RESULT_ACCEPTED;
     case MAV_CMD_SET_CAMERA_ZOOM:
-        return handle_mav_SET_CAMERA_ZOOM(
-            packet.param3,                   // instance
-            CAMERA_ZOOM_TYPE(packet.param1), // zoom type
-            packet.param2                    // zoom level
-        );
+        if (is_equal(packet.param1, (float)ZOOM_TYPE_CONTINUOUS) &&
+            set_zoom(ZoomType::RATE, packet.param2)) {
+            return MAV_RESULT_ACCEPTED;
+        }
+        if (is_equal(packet.param1, (float)ZOOM_TYPE_RANGE) &&
+            set_zoom(ZoomType::PCT, packet.param2)) {
+            return MAV_RESULT_ACCEPTED;
+        }
+        return MAV_RESULT_UNSUPPORTED;
     case MAV_CMD_SET_CAMERA_FOCUS:
         // accept any of the auto focus types
         switch ((SET_FOCUS_TYPE)packet.param1) {
@@ -516,13 +445,7 @@ bool AP_Camera::send_mavlink_message(GCS_MAVLINK &link, const enum ap_message ms
         break;
     case MSG_CAMERA_INFORMATION:
         CHECK_PAYLOAD_SIZE2(CAMERA_INFORMATION);
-        if (_camera_information_send_instance >= 0) {
-            const int16_t instance = _camera_information_send_instance;
-            _camera_information_send_instance = -1;
-            send_camera_information((uint8_t)instance, chan);
-        } else {
-            send_camera_information(chan);
-        }
+        send_camera_information(chan);
         break;
     case MSG_CAMERA_SETTINGS:
         CHECK_PAYLOAD_SIZE2(CAMERA_SETTINGS);
@@ -661,18 +584,6 @@ void AP_Camera::send_camera_information(mavlink_channel_t chan)
             _backends[instance]->send_camera_information(chan);
         }
     }
-}
-
-// send camera information for a specific instance to GCS
-void AP_Camera::send_camera_information(uint8_t instance, mavlink_channel_t chan)
-{
-    WITH_SEMAPHORE(_rsem);
-
-    auto *backend = get_instance(instance);
-    if (backend == nullptr) {
-        return;
-    }
-    backend->send_camera_information(chan);
 }
 
 #if AP_MAVLINK_MSG_VIDEO_STREAM_INFORMATION_ENABLED
@@ -983,52 +894,6 @@ AP_Camera_Backend *AP_Camera::get_instance(uint8_t instance) const
     }
     return _backends[instance];
 }
-
-#if AP_CAMERA_RUNCAM_ENABLED && (AP_CAMERA_MAX_INSTANCES > 1)
-// Convert to runcam specific backend
-void AP_Camera::convert_runcam_params()
-{
-    // exit immediately if CAM2_TYPE has already been configured
-    if (_params[1].type.configured()) {
-        return;
-    }
-
-    // RunCam PARAMETER_CONVERSION - Added: Nov-2024 ahead of 4.7 release
-
-    // Since slot 1 is essentially used by the trigger type, we will use slot 2 for runcam
-    int8_t rc_type = 0;
-    // find vehicle's top level key
-    uint16_t k_param_vehicle_key;
-    if (!AP_Param::find_top_level_key_by_pointer(AP::vehicle(), k_param_vehicle_key)) {
-        return;
-    }
-
-    // RunCam protocol configured so set cam type to RunCam
-    bool rc_protocol_configured = false;
-    AP_SerialManager *serial_manager = AP_SerialManager::get_singleton();
-    if (serial_manager && serial_manager->find_serial(AP_SerialManager::SerialProtocol_RunCam, 0)) {
-        rc_protocol_configured = true;
-    }
-
-    const AP_Param::ConversionInfo rc_type_info = {
-        k_param_vehicle_key, AP_GROUP_ELEM_IDX(1, 1), AP_PARAM_INT8, "CAM_RC_TYPE"
-    };
-    AP_Int8 rc_type_old;
-    const bool found_rc_type = AP_Param::find_old_parameter(&rc_type_info, &rc_type_old);
-
-    if (rc_protocol_configured || (found_rc_type && rc_type_old.get() > 0)) {
-        rc_type = int8_t(CameraType::RUNCAM);
-        _backends[1] = NEW_NOTHROW AP_RunCam(*this, _params[1], 1, _runcam_instances);
-        _backend_var_info[1] = AP_RunCam::var_info;
-        AP_Param::convert_class(k_param_vehicle_key, &_backends[1], _backend_var_info[1], 1, false);
-        AP_Param::invalidate_count();
-        _runcam_instances++;
-    }
-
-    _params[1].type.set_and_save(rc_type);
-
-}
-#endif // AP_CAMERA_RUNCAM_ENABLED && (AP_CAMERA_MAX_INSTANCES > 1)
 
 // perform any required parameter conversion
 void AP_Camera::convert_params()

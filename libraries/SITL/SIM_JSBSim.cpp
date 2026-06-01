@@ -16,11 +16,9 @@
   simulator connector for JSBSim
 */
 
-#include "SIM_config.h"
-
-#if AP_SIM_JSBSIM_ENABLED
-
 #include "SIM_JSBSim.h"
+
+#if HAL_SIM_JSBSIM_ENABLED
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -64,6 +62,11 @@ JSBSim::JSBSim(const char *frame_str) :
     if (model_name != nullptr) {
         jsbsim_model = model_name + 1;
     }
+    control_port = 5505 + instance*10;
+    fdm_port = 5504 + instance*10;
+
+    printf("JSBSim backend started: control_port=%u fdm_port=%u\n",
+           control_port, fdm_port);
 }
 
 /*
@@ -71,12 +74,6 @@ JSBSim::JSBSim(const char *frame_str) :
  */
 bool JSBSim::create_templates(void)
 {
-	control_port = 5505 + instance*10;
-	fdm_port = 5504 + instance*10;
-
-	printf("JSBSim backend started: instance=%u control_port=%u fdm_port=%u\n",
-		   instance, control_port, fdm_port);
-		   
     if (created_templates) {
         return true;
     }
@@ -438,12 +435,9 @@ void JSBSim::recv_fdm(const struct sitl_input &input)
     gyro = Vector3f(p, q, r);
 
     velocity_ef = Vector3f(fdm.v_north, fdm.v_east, fdm.v_down) * FEET_TO_METERS;
-    location = {
-        int32_t(RAD_TO_DEG_DOUBLE * fdm.latitude * 1.0e7),
-        int32_t(RAD_TO_DEG_DOUBLE * fdm.longitude * 1.0e7),
-        int32_t(fdm.agl*100 + home.alt),
-        Location::AltFrame::ABSOLUTE
-    };
+    location.lat = RAD_TO_DEG_DOUBLE * fdm.latitude * 1.0e7;
+    location.lng = RAD_TO_DEG_DOUBLE * fdm.longitude * 1.0e7;
+    location.alt = fdm.agl*100 + home.alt;
     dcm.from_euler(fdm.phi, fdm.theta, fdm.psi);
     airspeed = fdm.vcas * KNOTS_TO_METERS_PER_SECOND;
     airspeed_pitot = airspeed;
@@ -490,4 +484,4 @@ void JSBSim::update(const struct sitl_input &input)
 
 } // namespace SITL
 
-#endif  // AP_SIM_JSBSIM_ENABLED
+#endif  // HAL_SIM_JSBSIM_ENABLED

@@ -4,23 +4,22 @@
 void Sub::read_inertia()
 {
     // inertial altitude estimates
-    sub.pos_control.update_estimates();
+    inertial_nav.update();
 
     // pull position from ahrs
     Location loc;
-    // AHRS provides a best-guess in case of failure
-    UNUSED_RESULT(ahrs.get_location(loc));
+    ahrs.get_location(loc);
     current_loc.lat = loc.lat;
     current_loc.lng = loc.lng;
 
     // exit immediately if we do not have an altitude estimate
-    if (!AP::ahrs().has_status(AP_AHRS::Status::VERT_POS)) {
+    if (!inertial_nav.get_filter_status().flags.vert_pos) {
         return;
     }
 
-    current_loc.alt = pos_control.get_pos_estimate_U_m() * 100.0f;
+    current_loc.alt = inertial_nav.get_position_z_up_cm();
 
     // get velocity, altitude is always absolute frame, referenced from
     // water's surface
-    climb_rate = pos_control.get_vel_estimate_U_ms() * 100.0f;
+    climb_rate = inertial_nav.get_velocity_z_up_cms();
 }

@@ -6,13 +6,13 @@ Andrew Tridgell, October 2011
 
  AP_FLAKE8_CLEAN
 """
+from __future__ import print_function
 import atexit
-import copy
 import fnmatch
+import copy
 import glob
 import optparse
 import os
-import pathlib
 import re
 import shutil
 import signal
@@ -21,24 +21,26 @@ import sys
 import time
 import traceback
 
-from pymavlink.generator import mavtemplate
-
-import antennatracker
+import blimp
+import rover
 import arducopter
 import arduplane
 import ardusub
-import balancebot
-import blimp
-import examples
-import helicopter
+import antennatracker
 import quadplane
-import rover
+import balancebot
 import sailboat
+import helicopter
 
+import examples
 from pysim import util
+from pymavlink.generator import mavtemplate
+
 from vehicle_test_suite import Test
 
 tester = None
+
+build_opts = None
 
 
 def buildlogs_dirpath():
@@ -96,11 +98,11 @@ def build_binaries():
 
 def build_examples(**kwargs):
     """Build examples."""
-    for target in 'Pixhawk1', 'navio', 'linux', 'sitl':
+    for target in 'Pixhawk1', 'navio', 'linux':
         print("Running build.examples for %s" % target)
         try:
             util.build_examples(target, **kwargs)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print("Failed build_examples on board=%s" % target)
             print(str(e))
             return False
@@ -114,7 +116,7 @@ def build_unit_tests(**kwargs):
         print("Running build.unit_tests for %s" % target)
         try:
             util.build_tests(target, **kwargs)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print("Failed build.unit_tests on board=%s" % target)
             print(str(e))
             return False
@@ -154,17 +156,17 @@ def run_unit_tests():
 
 def run_clang_scan_build():
     """Run Clang Scan-build utility."""
-    if util.run_cmd("scan-build python3 waf configure",
+    if util.run_cmd("scan-build python waf configure",
                     directory=util.reltopdir('.')) != 0:
         print("Failed scan-build-configure")
         return False
 
-    if util.run_cmd("scan-build python3 waf clean",
+    if util.run_cmd("scan-build python waf clean",
                     directory=util.reltopdir('.')) != 0:
         print("Failed scan-build-clean")
         return False
 
-    if util.run_cmd("scan-build python3 waf build",
+    if util.run_cmd("scan-build python waf build",
                     directory=util.reltopdir('.')) != 0:
         print("Failed scan-build-build")
         return False
@@ -236,6 +238,7 @@ def test_prerequisites():
 
 def alarm_handler(signum, frame):
     """Handle test timeout."""
+    global results, opts, tester
     try:
         print("Alarm handler called")
         if tester is not None:
@@ -250,7 +253,7 @@ def alarm_handler(signum, frame):
         convert_gpx()
         write_fullresults()
         os.killpg(0, signal.SIGKILL)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
     sys.exit(1)
 
@@ -277,7 +280,6 @@ __bin_names = {
     "Plane": "arduplane",
     "PlaneTests1a": "arduplane",
     "PlaneTests1b": "arduplane",
-    "PlaneTests1c": "arduplane",
 
     "Rover": "ardurover",
     "Tracker": "antennatracker",
@@ -298,7 +300,7 @@ def binary_path(step, debug=False):
     """Get vehicle binary path."""
     try:
         vehicle = step.split(".")[1]
-    except IndexError:
+    except Exception:
         return None
 
     if vehicle not in __bin_names:
@@ -355,7 +357,6 @@ tester_class_map = {
     "test.Plane": arduplane.AutoTestPlane,
     "test.PlaneTests1a": arduplane.AutoTestPlaneTests1a,
     "test.PlaneTests1b": arduplane.AutoTestPlaneTests1b,
-    "test.PlaneTests1c": arduplane.AutoTestPlaneTests1c,
     "test.QuadPlane": quadplane.AutoTestQuadPlane,
     "test.Rover": rover.AutoTestRover,
     "test.BalanceBot": balancebot.AutoTestBalanceBot,
@@ -382,32 +383,26 @@ def run_specific_test(step, *args, **kwargs):
     if t is None:
         return []
     (testname, test) = t
-    tests = set()
-    tests.update(test.split(","))
 
     tester_class = tester_class_map[testname]
     global tester
     tester = tester_class(*args, **kwargs)
 
     # print("Got %s" % str(tester))
-    run = []
     for a in tester.tests():
         if not isinstance(a, Test):
             a = Test(a)
-        # print("Got %s" % (a.name))
-        if a.name in tests:
-            run.append(a)
-            tests.remove(a.name)
-    if len(tests):
-        print(f"Failed to find tests {tests}")
-        sys.exit(1)
-    return tester.autotest(tests=run, allow_skips=False, step_name=step), tester
+        print("Got %s" % (a.name))
+        if a.name == test:
+            return tester.autotest(tests=[a], allow_skips=False, step_name=step), tester
+    print("Failed to find test %s on %s" % (test, testname))
+    sys.exit(1)
 
 
 def run_step(step):
     """Run one step."""
     # remove old logs
-    util.run_cmd('rm -f logs/*.BIN logs/LASTLOG.TXT')
+    util.run_cmd('/bin/rm -f logs/*.BIN logs/LASTLOG.TXT')
 
     if step == "prerequisites":
         return test_prerequisites()
@@ -431,6 +426,8 @@ def run_step(step):
 
     if opts.Werror:
         build_opts['extra_configure_args'].append("--Werror")
+
+    build_opts = build_opts
 
     vehicle_binary = None
     board = "sitl"
@@ -482,10 +479,10 @@ def run_step(step):
 
     # see if we need any supplementary binaries
     supplementary_binaries = []
-    for key, value in supplementary_test_binary_map.items():
-        if step.startswith(key):
+    for k in supplementary_test_binary_map.keys():
+        if step.startswith(k):
             # this test needs to use supplementary binaries
-            for supplementary_test_binary in value:
+            for supplementary_test_binary in supplementary_test_binary_map[k]:
                 a = supplementary_test_binary.split(':')
                 if len(a) != 4:
                     raise ValueError("Bad supplementary_test_binary %s" % supplementary_test_binary)
@@ -512,7 +509,6 @@ def run_step(step):
         "gdb": opts.gdb,
         "gdb_no_tui": opts.gdb_no_tui,
         "lldb": opts.lldb,
-        "strace": opts.strace,
         "gdbserver": opts.gdbserver,
         "breakpoints": opts.breakpoint,
         "disable_breakpoints": opts.disable_breakpoints,
@@ -529,8 +525,6 @@ def run_step(step):
     }
     if opts.speedup is not None:
         fly_opts["speedup"] = opts.speedup
-
-    fly_opts["move_logs_on_test_failure"] = opts.move_logs_on_test_failure
 
     # handle "test.Copter" etc:
     if step in tester_class_map:
@@ -639,7 +633,8 @@ class TestResults(object):
 
         # Load template file
         template_path = 'Tools/autotest/web/autotest-badge-template.svg'
-        template = pathlib.Path(util.reltopdir(template_path)).read_text()
+        with open(util.reltopdir(template_path), "r") as f:
+            template = f.read()
 
         # Add our results to the template
         badge = template.format(color=badge_color,
@@ -669,6 +664,7 @@ def write_webresults(results_to_write):
 
 def write_fullresults():
     """Write out full results set."""
+    global results
     results.addglob("Google Earth track", '*.kmz')
     results.addfile('Full Logs', 'autotest-output.txt')
     results.addglob('DataFlash Log', '*-log.bin')
@@ -708,6 +704,7 @@ def write_fullresults():
 
 def run_tests(steps):
     """Run a list of steps."""
+    global results
 
     corefiles = glob.glob("core*")
     corefiles.extend(glob.glob("ap-*.core"))
@@ -751,7 +748,7 @@ def run_tests(steps):
                     failed_testinstances[step].append(testinstance)
                 results.add(step, '<span class="failed-text">FAILED</span>',
                             time.time() - t1)
-        except Exception as msg:  # noqa: BLE001
+        except Exception as msg:
             passed = False
             failed.append(step)
             print(">>>> FAILED STEP: %s at %s (%s)" %
@@ -761,6 +758,7 @@ def run_tests(steps):
                         '<span class="failed-text">FAILED</span>',
                         time.time() - t1)
 
+        global tester
         if tester is not None and tester.rc_thread is not None:
             if passed:
                 print("BAD: RC Thread still alive after run_step")
@@ -840,7 +838,7 @@ if __name__ == "__main__":
         """Custom option parse class."""
 
         def format_epilog(self, formatter):
-            """Return customized option parser epilog."""
+            """Retun customized option parser epilog."""
             return self.epilog
 
     parser = MyOptionParser(
@@ -855,10 +853,6 @@ if __name__ == "__main__":
                       action='store_true',
                       default=False,
                       help='Run in autotest-server mode; dangerous!')
-    parser.add_option("--move-logs-on-test-failure",
-                      action='store_true',
-                      default=None,
-                      help='Move logs to ../buildlogs if a test fails')
     parser.add_option("--skip",
                       type='string',
                       default='',
@@ -1007,10 +1001,6 @@ if __name__ == "__main__":
                          default=False,
                          action='store_true',
                          help='run ArduPilot binaries under lldb')
-    group_sim.add_option("", "--strace",
-                         action='store_true',
-                         default=False,
-                         help="strace the ArduPilot binary")
     group_sim.add_option("-B", "--breakpoint",
                          type='string',
                          action="append",
@@ -1069,13 +1059,6 @@ if __name__ == "__main__":
             opts.timeout *= 10
         elif opts.gdb:
             opts.timeout = None
-
-    # default to moving logs when running in autotest-server mode:
-    if opts.move_logs_on_test_failure is None:
-        opts.move_logs_on_test_failure = opts.autotest_server
-
-    if os.getenv("GITHUB_ACTIONS") == "true":
-        opts.move_logs_on_test_failure = True
 
     steps = [
         'prerequisites',
@@ -1136,7 +1119,6 @@ if __name__ == "__main__":
 
         'test.PlaneTests1a',
         'test.PlaneTests1b',
-        'test.PlaneTests1c',
 
         'clang-scan-build',
     ]

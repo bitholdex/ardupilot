@@ -17,6 +17,7 @@
 
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Math/AP_Math.h>
+#include <AP_HAL/utility/OwnPtr.h>
 #include "Scheduler.h"
 #include "Semaphores.h"
 #include "interface.h"
@@ -27,11 +28,7 @@ using namespace QURT;
 #define MHZ (1000U*1000U)
 #define KHZ (1000U)
 
-#ifdef HAL_SPI_DEVICE_LIST
-const char *device_names[] = {
-    HAL_SPI_DEVICE_LIST
-};
-#endif  // HAL_SPI_DEVICE_LIST
+const char *device_names[] = {"INV1", "INV2", "INV3"};
 
 static SPIBus *spi_bus;
 
@@ -68,12 +65,6 @@ bool SPIDevice::transfer(const uint8_t *send, uint32_t send_len,
     // and the data to write is in the send buffer
     if (!recv) {
         return transfer_fullduplex(send, (uint8_t*) send, send_len);
-    }
-
-    // Special case handling. This can happen when a send buffer is specified
-    // even though we are doing only a read.
-    if (send == recv && send_len == recv_len) {
-        return transfer_fullduplex(send, recv, send_len);
     }
 
     // This is a read transaction
@@ -115,8 +106,8 @@ bool SPIDevice::adjust_periodic_callback(AP_HAL::Device::PeriodicHandle h, uint3
     return bus.adjust_timer(h, period_usec);
 }
 
-AP_HAL::SPIDevice *
-SPIDeviceManager::get_device_ptr(const char *name)
+AP_HAL::OwnPtr<AP_HAL::SPIDevice>
+SPIDeviceManager::get_device(const char *name)
 {
     uint8_t i;
     for (i = 0; i<ARRAY_SIZE(device_names); i++) {
@@ -125,13 +116,13 @@ SPIDeviceManager::get_device_ptr(const char *name)
         }
     }
     if (i == ARRAY_SIZE(device_names)) {
-        return nullptr;
+        return AP_HAL::OwnPtr<AP_HAL::SPIDevice>(nullptr);
     }
 
     if (spi_bus == nullptr) {
         spi_bus = new SPIBus();
     }
 
-    return new SPIDevice(name, *spi_bus);
+    return AP_HAL::OwnPtr<AP_HAL::SPIDevice>(new SPIDevice(name, *spi_bus));
 }
 

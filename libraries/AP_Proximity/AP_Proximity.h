@@ -28,9 +28,7 @@
 
 #include <AP_HAL/Semaphores.h>
 
-#ifndef AP_PROXIMITY_MAX_INSTANCES 
-  #define AP_PROXIMITY_MAX_INSTANCES             5   // Maximum number of proximity sensor instances available on this platform
-#endif
+#define PROXIMITY_MAX_INSTANCES             5   // Maximum number of proximity sensor instances available on this platform
 #define PROXIMITY_SENSOR_ID_START 10
 
 class AP_Proximity_Backend;
@@ -104,7 +102,7 @@ public:
     };
 
     // detect and initialise any available proximity sensors
-    __INITFUNC__ void init();
+    void init();
 
     // update state of all proximity sensors. Should be called at high rate from main loop
     void update();
@@ -128,8 +126,8 @@ public:
     bool prearm_healthy(char *failure_msg, const uint8_t failure_msg_len) const;
 
     // get maximum and minimum distances (in meters)
-    float distance_max_m() const;
-    float distance_min_m() const;
+    float distance_max() const;
+    float distance_min() const;
 
     //
     // 3D boundary related methods
@@ -176,8 +174,8 @@ public:
     //
 
     // get distance upwards in meters. returns true on success
-    bool get_upward_distance(uint8_t instance, float &distance_m) const;
-    bool get_upward_distance(float &distance_m) const;
+    bool get_upward_distance(uint8_t instance, float &distance) const;
+    bool get_upward_distance(float &distance) const;
 
     // set alt as read from downward facing rangefinder. Tilt is already adjusted for
     void set_rangefinder_alt(bool use, bool healthy, float alt_cm);
@@ -193,7 +191,7 @@ public:
         const struct AP_Param::GroupInfo *var_info; // stores extra parameter information for the sensor (if it exists)
     };
 
-    static const struct AP_Param::GroupInfo *backend_var_info[AP_PROXIMITY_MAX_INSTANCES];
+    static const struct AP_Param::GroupInfo *backend_var_info[PROXIMITY_MAX_INSTANCES];
 
     // parameter list
     static const struct AP_Param::GroupInfo var_info[];
@@ -211,37 +209,37 @@ public:
 
     // get proximity address (for AP_Periph CAN)
     uint8_t get_address(uint8_t id) const {
-        return id >= AP_PROXIMITY_MAX_INSTANCES? 0 : uint8_t(params[id].address.get());
+        return id >= PROXIMITY_MAX_INSTANCES? 0 : uint8_t(params[id].address.get());
     }
 
 protected:
 
     // parameters for backends
-    AP_Proximity_Params params[AP_PROXIMITY_MAX_INSTANCES];
+    AP_Proximity_Params params[PROXIMITY_MAX_INSTANCES];
 
 private:
     static AP_Proximity *_singleton;
-    Proximity_State state[AP_PROXIMITY_MAX_INSTANCES];
-    AP_Proximity_Backend *drivers[AP_PROXIMITY_MAX_INSTANCES];
+    Proximity_State state[PROXIMITY_MAX_INSTANCES];
+    AP_Proximity_Backend *drivers[PROXIMITY_MAX_INSTANCES];
     uint8_t num_instances;
 
     // return true if the given instance exists
     bool valid_instance(uint8_t i) const;
 
     // parameters for all instances
-    AP_Int8 _raw_log_enable;                    // enable logging raw distances
-    AP_Int8 _ign_gnd_enable;                    // true if land detection should be enabled
-    AP_Float _filt_freq;                        // cutoff frequency for low pass filter
-    AP_Float _alt_min_m;                        // Minimum altitude -in meters- below which proximity should not work.
+    AP_Int8 _raw_log_enable;                           // enable logging raw distances
+    AP_Int8 _ign_gnd_enable;                           // true if land detection should be enabled
+    AP_Float _filt_freq;                               // cutoff frequency for low pass filter
+    AP_Float _alt_min;                                 // Minimum altitude -in meters- below which proximity should not work.
 
     // get alt from rangefinder in meters. This reading is corrected for vehicle tilt
     bool get_rangefinder_alt(float &alt_m) const;
 
     struct RangeFinderState {
-        bool use;                               // true if enabled
-        bool healthy;                           // true if we can trust the altitude from the rangefinder
-        int16_t alt_cm;                         // tilt compensated altitude (in cm) from rangefinder
-        uint32_t last_downward_update_ms;       // last update ms
+        bool use;                          // true if enabled
+        bool healthy;                      // true if we can trust the altitude from the rangefinder
+        int16_t alt_cm;                    // tilt compensated altitude (in cm) from rangefinder
+        uint32_t last_downward_update_ms;  // last update ms
     } _rangefinder_state;
 
     HAL_Semaphore detect_sem;

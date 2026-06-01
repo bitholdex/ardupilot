@@ -53,7 +53,7 @@ void ModeGuided::update()
         {
             // stop vehicle if target not updated within 3 seconds
             if (have_attitude_target && (millis() - _des_att_time_ms) > 3000) {
-                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "target not received last 3secs, stopping");
+                gcs().send_text(MAV_SEVERITY_WARNING, "target not received last 3secs, stopping");
                 have_attitude_target = false;
             }
             if (have_attitude_target) {
@@ -77,7 +77,7 @@ void ModeGuided::update()
         {
             // stop vehicle if target not updated within 3 seconds
             if (have_attitude_target && (millis() - _des_att_time_ms) > 3000) {
-                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "target not received last 3secs, stopping");
+                gcs().send_text(MAV_SEVERITY_WARNING, "target not received last 3secs, stopping");
                 have_attitude_target = false;
             }
             if (have_attitude_target) {
@@ -112,7 +112,7 @@ void ModeGuided::update()
             // handle timeout
             if (_have_strthr && (AP_HAL::millis() - _strthr_time_ms) > 3000) {
                 _have_strthr = false;
-                GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "target not received last 3secs, stopping");
+                gcs().send_text(MAV_SEVERITY_WARNING, "target not received last 3secs, stopping");
             }
             if (_have_strthr) {
                 // pass latest steering and throttle directly to motors library
@@ -136,7 +136,7 @@ void ModeGuided::update()
             break;
 
         default:
-            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "Unknown GUIDED mode");
+            gcs().send_text(MAV_SEVERITY_WARNING, "Unknown GUIDED mode");
             break;
     }
 }
@@ -180,16 +180,16 @@ float ModeGuided::nav_bearing() const
     return 0.0f;
 }
 
-float ModeGuided::crosstrack_error_m() const
+float ModeGuided::crosstrack_error() const
 {
     switch (_guided_mode) {
     case SubMode::WP:
-        return g2.wp_nav.crosstrack_error_m();
+        return g2.wp_nav.crosstrack_error();
     case SubMode::HeadingAndSpeed:
     case SubMode::TurnRateAndSpeed:
         return 0.0f;
     case SubMode::Loiter:
-        return rover.mode_loiter.crosstrack_error_m();
+        return rover.mode_loiter.crosstrack_error();
     case SubMode::SteeringAndThrottle:
     case SubMode::Stop:
         return 0.0f;
@@ -218,7 +218,7 @@ float ModeGuided::get_desired_lat_accel() const
     return 0.0f;
 }
 
-// return straight-line distance (in meters) to destination
+// return distance (in meters) to destination
 float ModeGuided::get_distance_to_destination() const
 {
     switch (_guided_mode) {
@@ -257,17 +257,17 @@ bool ModeGuided::reached_destination() const
 }
 
 // set desired speed in m/s
-bool ModeGuided::set_desired_speed(float speed_ms)
+bool ModeGuided::set_desired_speed(float speed)
 {
     switch (_guided_mode) {
     case SubMode::WP:
-        return g2.wp_nav.set_speed_max(speed_ms);
+        return g2.wp_nav.set_speed_max(speed);
     case SubMode::HeadingAndSpeed:
     case SubMode::TurnRateAndSpeed:
         // speed is set from mavlink message
         return false;
     case SubMode::Loiter:
-        return rover.mode_loiter.set_desired_speed(speed_ms);
+        return rover.mode_loiter.set_desired_speed(speed);
     case SubMode::SteeringAndThrottle:
     case SubMode::Stop:
         // no speed control
@@ -306,14 +306,6 @@ bool ModeGuided::get_desired_location(Location& destination) const
 // set desired location
 bool ModeGuided::set_desired_location(const Location &destination, Location next_destination)
 {
-#if AP_FENCE_ENABLED
-    // reject destination outside the fence
-    if (!rover.fence.check_location_within_fence(destination)) {
-        LOGGER_WRITE_ERROR(LogErrorSubsystem::NAVIGATION, LogErrorCode::DEST_OUTSIDE_FENCE);
-        return false;
-    }
-#endif
-
     if (use_scurves_for_navigation()) {
         // use scurves for navigation
         if (!g2.wp_nav.set_desired_location(destination, next_destination)) {

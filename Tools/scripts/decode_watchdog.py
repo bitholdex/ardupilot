@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+#!/usr/bin/env python
 '''
 decode an watchdog message
 
@@ -8,10 +7,9 @@ decode an watchdog message
 AP_FLAKE8_CLEAN
 '''
 
-import optparse
 import re
 import sys
-
+import optparse
 from collections import OrderedDict
 
 import decode_ICSR

@@ -17,7 +17,6 @@
 */
 
 #include "SIM_Battery.h"
-#include <AP_Math/AP_Math.h>
 
 using namespace SITL;
 
@@ -115,47 +114,34 @@ void Battery::set_initial_SoC(float voltage)
     remaining_Ah = 0;
 }
 
-void Battery::setup(float _capacity_Ah, float _resistance_ohm, float _max_voltage, float _ambient_temperature_degC)
+void Battery::setup(float _capacity_Ah, float _resistance, float _max_voltage)
 {
     capacity_Ah = _capacity_Ah;
-    resistance_ohm = _resistance_ohm;
+    resistance = _resistance;
     max_voltage = _max_voltage;
-    ambient_temperature_degC = _ambient_temperature_degC;
-
-    voltage_set = max_voltage;
-    voltage_filter.reset(voltage_set);
-    set_initial_SoC(voltage_set);
 }
 
-void Battery::maybe_reset(float desired_voltage, float desired_capacity_Ah)
+void Battery::init_voltage(float voltage)
 {
-    const bool reset_not_needed = (is_equal(voltage_set, desired_voltage)
-                                   && is_equal(capacity_Ah, desired_capacity_Ah));
-    if (reset_not_needed) {
-        return;
-    }
-
-    capacity_Ah = desired_capacity_Ah;
-    // a negative desired voltage is unexpected, but not problematic
-    voltage_set = MIN(desired_voltage, max_voltage);
-    voltage_filter.reset(voltage_set);
-    set_initial_SoC(voltage_set);
+    voltage_filter.reset(voltage);
+    voltage_set = voltage;
+    set_initial_SoC(voltage);
 }
 
-void Battery::consume_energy(float current_amp, uint64_t now_us)
+void Battery::set_current(float current)
 {
-    constexpr float microsec_to_sec = 1.0e-6f;
-    float dt = static_cast<float>(now_us - last_us) * microsec_to_sec;
+    uint64_t now = AP_HAL::micros64();
+    float dt = (now - last_us) * 1.0e-6;
     if (dt > 0.1) {
         // we stopped updating
         dt = 0;
     }
-    last_us = now_us;
-    float delta_Ah = current_amp * dt / 3600;
+    last_us = now;
+    float delta_Ah = current * dt / 3600;
     remaining_Ah -= delta_Ah;
     remaining_Ah = MAX(0, remaining_Ah);
 
-    float voltage_delta = current_amp * resistance_ohm;
+    float voltage_delta = current * resistance;
     float voltage;
     if (!is_positive(capacity_Ah)) {
         voltage = voltage_set;
@@ -165,18 +151,17 @@ void Battery::consume_energy(float current_amp, uint64_t now_us)
 
     voltage_filter.apply(voltage, dt);
 
-    update_temperature(current_amp, dt);
+    {
+        const uint64_t temperature_dt = now - temperature.last_update_micros;
+        temperature.last_update_micros = now;
+        // 1 amp*1 second == 0.1 degrees of energy.  Did those units hurt?
+        temperature.kelvin += 0.1 * current * temperature_dt * 0.000001;
+        // decay temperature at some %second towards ambient
+        temperature.kelvin -= (temperature.kelvin - 273) * 0.10 * temperature_dt * 0.000001;
+    }
 }
 
-void Battery::update_temperature(float current_amp, float dt)
+float Battery::get_voltage(void) const
 {
-    // Reasonable thermal_capacity value for a commonly sized (500g) Li-ion battery
-    // (reminder: thermal_capacity = mass * specific_heat)
-    constexpr float thermal_capacity = 500.0f;  // J/degC
-    constexpr float inverse_of_thermal_capacity = 1 / thermal_capacity;  // use inverse so we can multiply, not divide
-    const float temp_increase = (current_amp * current_amp) * resistance_ohm * inverse_of_thermal_capacity * dt;
-    // Account for ambient dissipation. Rate chosen to match previous (unjustified) steady-state behavior
-    constexpr float temperature_decay_coefficient = 5.6e-4f;
-    const float temp_decrease = (temperature_degC - ambient_temperature_degC) * temperature_decay_coefficient * dt;
-    temperature_degC += (temp_increase - temp_decrease);
+    return voltage_filter.get();
 }

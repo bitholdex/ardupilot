@@ -17,6 +17,7 @@
 
 #if AP_BARO_KELLERLD_ENABLED
 
+#include <utility>
 #include <stdio.h>
 
 #include <AP_Math/AP_Math.h>
@@ -42,25 +43,19 @@ static const uint8_t CMD_PRANGE_MAX_LSB = 0x16;
 // write to this address to start pressure measurement
 static const uint8_t CMD_REQUEST_MEASUREMENT = 0xAC;
 
-// Status byte handling, per Keller LD "Communication Protocol 4LD-9LD" (v2.6, pg 7)
-//   bits 7-6 : reserved, must be 01
-//   bit 5    : ignored, known to be unreliable in block reads
-//   bits 4-3 : operating mode (00 = normal measurement)
-//   bit 2    : checksum error? (0 = ok, 1 = error)
-//   bits 1-0 : don't care
-static const uint8_t STATUS_REQUIRED_MASK = 0b11011100;
-static const uint8_t STATUS_REQUIRED_BITS = 0b01000000;
-
-AP_Baro_KellerLD::AP_Baro_KellerLD(AP_Baro &baro, AP_HAL::Device &dev)
+AP_Baro_KellerLD::AP_Baro_KellerLD(AP_Baro &baro, AP_HAL::OwnPtr<AP_HAL::Device> dev)
     : AP_Baro_Backend(baro)
-    , _dev(&dev)
+    , _dev(std::move(dev))
 {
 }
 
 // Look for the device on the bus and see if it responds appropriately
-AP_Baro_Backend *AP_Baro_KellerLD::probe(AP_Baro &baro, AP_HAL::Device &dev)
+AP_Baro_Backend *AP_Baro_KellerLD::probe(AP_Baro &baro, AP_HAL::OwnPtr<AP_HAL::Device> dev)
 {
-    AP_Baro_KellerLD *sensor = NEW_NOTHROW AP_Baro_KellerLD(baro, dev);
+    if (!dev) {
+        return nullptr;
+    }
+    AP_Baro_KellerLD *sensor = NEW_NOTHROW AP_Baro_KellerLD(baro, std::move(dev));
     if (!sensor || !sensor->_init()) {
         delete sensor;
         return nullptr;
@@ -237,7 +232,7 @@ bool AP_Baro_KellerLD::_read()
         return false;
     }
 
-    const uint8_t status = data[0];
+    //uint8_t status = data[0];
     uint16_t pressure_raw = (data[1] << 8) | data[2];
     uint16_t temperature_raw = (data[3] << 8) | data[4];
 
@@ -249,12 +244,6 @@ bool AP_Baro_KellerLD::_read()
         Debug("pressure_raw: %d\ttemperature_raw: %d", pressure_raw, temperature_raw);
     }
 #endif
-
-    // Reject if the sensor is not in the normal measurement state, or is reporting an error.
-    if ((status & STATUS_REQUIRED_MASK) != STATUS_REQUIRED_BITS) {
-        Debug("Keller: bad status 0x%02x", status);
-        return false;
-    }
 
     if (pressure_raw == 0 || temperature_raw == 0) {
         Debug("Keller: bad read");

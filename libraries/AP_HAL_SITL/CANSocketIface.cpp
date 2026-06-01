@@ -46,6 +46,12 @@ extern const AP_HAL::HAL& hal;
 
 using namespace HALSITL;
 
+#if HAL_CANMANAGER_ENABLED
+#define Debug(fmt, args...) do { AP::can().log_text(AP_CANManager::LOG_DEBUG, "CANSITLIface", fmt, ##args); } while (0)
+#else
+#define Debug(fmt, args...)
+#endif
+
 uint8_t CANIface::_num_interfaces;
 
 bool CANIface::is_initialized() const
@@ -196,12 +202,12 @@ void CANIface::_confirmSentFrame()
     }
 }
 
-bool CANIface::init(const uint32_t bitrate, const uint32_t fdbitrate)
+bool CANIface::init(const uint32_t bitrate, const uint32_t fdbitrate, const OperatingMode mode)
 {
-    return init(bitrate);
+    return init(bitrate, mode);
 }
 
-bool CANIface::init(const uint32_t bitrate)
+bool CANIface::init(const uint32_t bitrate, const OperatingMode mode)
 {
     const auto *_sitl = AP::sitl();
     if (_sitl == nullptr) {

@@ -1,5 +1,3 @@
-# flake8: noqa
-
 """
 Emit parameter documentation in markdown format
 """
@@ -10,7 +8,7 @@ import re
 import os
 
 # Parameter groups disabled at compile time (Vehicle-specific)
-sub_blacklist = ['AVOID_', 'CIRCLE_', 'FLOW', 'MIS_', 'PRX', 'RALLY_', 'RCMAP_', 'RPM', 'TERRAIN_', 'WP_']
+sub_blacklist = ['AVOID_', 'CIRCLE_', 'FLOW', 'MIS_', 'PRX', 'RALLY_', 'RCMAP_', 'RPM', 'TERRAIN_', 'WPNAV_']
 
 # Parameter groups with redundant information (ie RCn_, SERVOn_)
 # We can keep the documentation concise by only documenting these once
@@ -58,7 +56,7 @@ class MDEmit(Emit):
         pname = g.reference
         
         # Check to see this is a parameter group with redundant information
-        rename = re.sub(r'\d+', 'n', g.reference)
+        rename = re.sub('\d+', 'n', g.reference)
         if rename in nparams:
             if rename in self.nparams:
                 return
@@ -79,14 +77,12 @@ class MDEmit(Emit):
         t = '\n\n# %s' % tag
         
         for param in g.params:
-            if not self.should_emit_param(param):
-                continue
             if not hasattr(param, 'DisplayName') or not hasattr(param, 'Description'):
                 continue
             d = param.__dict__
             name = param.name.split(':')[-1]
             if nparam:
-                name = re.sub(r'\d+', 'n', name, 1)
+                name = re.sub('\d+', 'n', name, 1)
             tag = '%s: %s' % (name, param.DisplayName)
             t += '\n\n## %s' % tag
             if d.get('User', None) == 'Advanced':

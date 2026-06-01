@@ -16,7 +16,7 @@ public:
 
     void update() override;
 
-    static bool subscribe_msgs(AP_DroneCAN* ap_dronecan);
+    static void subscribe_msgs(AP_DroneCAN* ap_dronecan);
     static AP_RangeFinder_DroneCAN* get_dronecan_backend(AP_DroneCAN* ap_dronecan, uint8_t node_id, uint8_t address, bool create_new);
     static AP_RangeFinder_Backend* detect(RangeFinder::RangeFinder_State &_state, AP_RangeFinder_Params &_params);
 
@@ -28,9 +28,8 @@ protected:
     }
 private:
     uint8_t _instance;
-    // _status is the state received from the peripheral - or "NoData" in case of timeout
     RangeFinder::Status _status;
-    float _distance_m;
+    uint16_t _distance_cm;
     uint32_t _last_reading_ms;
     AP_DroneCAN* _ap_dronecan;
     uint8_t _node_id;

@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-
+#!/usr/bin/env python
 ############################################################################
 #
 #   Copyright (c) 2012-2017 PX4 Development Team. All rights reserved.
@@ -53,22 +52,24 @@
 
 # AP_FLAKE8_CLEAN
 
+# for python2.7 compatibility
+from __future__ import print_function
+
+import sys
 import argparse
-import array
-import base64
 import binascii
+import serial
+import struct
 import json
+import zlib
+import base64
+import time
+import array
 import os
 import platform
 import re
-import struct
-import sys
-import time
-import zlib
 
 from sys import platform as _platform
-
-import serial
 
 is_WSL = bool("Microsoft" in platform.uname()[2])
 is_WSL2 = bool("microsoft-standard-WSL2" in platform.release())
@@ -164,8 +165,9 @@ class firmware(object):
     def __init__(self, path):
 
         # read the file
-        with open(path, "r") as in_file:
-            self.desc = json.load(in_file)
+        f = open(path, "r")
+        self.desc = json.load(f)
+        f.close()
 
         self.image = bytearray(zlib.decompress(base64.b64decode(self.desc['image'])))
         if 'extf_image' in self.desc:
@@ -223,7 +225,6 @@ class uploader(object):
     GET_CHIP        = b'\x2c'     # rev5+  , get chip version
     SET_BOOT_DELAY  = b'\x2d'     # rev5+  , set boot delay
     GET_CHIP_DES    = b'\x2e'     # rev5+  , get chip description in ASCII
-    GET_SOFTWARE    = b'\x2f'
     MAX_DES_LENGTH  = 20
 
     REBOOT          = b'\x30'
@@ -261,8 +262,7 @@ class uploader(object):
                  source_system=None,
                  source_component=None,
                  no_extf=False,
-                 force_erase=False,
-                 identify_only=False):
+                 force_erase=False):
         self.MAVLINK_REBOOT_ID1 = bytearray(b'\xfe\x21\x72\xff\x00\x4c\x00\x00\x40\x40\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf6\x00\x01\x00\x00\x53\x6b')  # NOQA
         self.MAVLINK_REBOOT_ID0 = bytearray(b'\xfe\x21\x45\xff\x00\x4c\x00\x00\x40\x40\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xf6\x00\x00\x00\x00\xcc\x37')  # NOQA
         if target_component is None:
@@ -273,10 +273,9 @@ class uploader(object):
             source_component = 1
         self.no_extf = no_extf
         self.force_erase = force_erase
-        self.identify_only = identify_only
 
         # open the port, keep the default timeout short so we can poll quickly
-        self.port = serial.Serial(portname, baudrate_bootloader, timeout=2.0, write_timeout=2.0, exclusive=True)
+        self.port = serial.Serial(portname, baudrate_bootloader, timeout=2.0, write_timeout=2.0)
         self.baudrate_bootloader = baudrate_bootloader
         if baudrate_bootloader_flash is not None:
             self.baudrate_bootloader_flash = baudrate_bootloader_flash
@@ -391,7 +390,7 @@ class uploader(object):
             return True
 
         except NotImplementedError:
-            raise RuntimeError("Programming not supported for this version of silicon!\n"
+            raise RuntimeError("Programing not supported for this version of silicon!\n"
                                "See https://pixhawk.org/help/errata")
         except RuntimeError:
             # timeout, no response yet
@@ -435,19 +434,8 @@ class uploader(object):
         self.__getSync()
         if runningPython3:
             value = value.decode('ascii')
-        pieces = value.split(",")
-        return pieces
-
-    # send the GET_SOFTWARE command
-    def __getBootloaderSoftware(self):
-        self.__send(uploader.GET_SOFTWARE + uploader.EOC)
-        length = self.__recv_int()
-        print(f"RX Len: {length}")
-        value = self.__recv(length)
-        if runningPython3:
-            value = value.decode('ascii')
-        self.__getSync()
-        return value
+        peices = value.split(",")
+        return peices
 
     def __drawProgressBar(self, label, progress, maxVal):
         if maxVal < progress:
@@ -586,22 +574,24 @@ class uploader(object):
     # download code
     def __download(self, label, fw):
         print("\n", end='')
+        f = open(fw, 'wb')
+
         downloadProgress = 0
         readsize = uploader.READ_MULTI_MAX
         total = 0
-        with open(fw, 'wb') as out_file:
-            while True:
-                n = min(self.fw_maxsize - total, readsize)
-                bb = self.__read_multi(n)
-                out_file.write(bb)
+        while True:
+            n = min(self.fw_maxsize - total, readsize)
+            bb = self.__read_multi(n)
+            f.write(bb)
 
-                total += len(bb)
-                # Print download progress (throttled, so it does not delay download progress)
-                downloadProgress += 1
-                if downloadProgress % 256 == 0:
-                    self.__drawProgressBar(label, total, self.fw_maxsize)
-                if len(bb) < readsize:
-                    break
+            total += len(bb)
+            # Print download progress (throttled, so it does not delay download progress)
+            downloadProgress += 1
+            if downloadProgress % 256 == 0:
+                self.__drawProgressBar(label, total, self.fw_maxsize)
+            if len(bb) < readsize:
+                break
+        f.close()
         self.__drawProgressBar(label, total, self.fw_maxsize)
         print("\nReceived %u bytes to %s" % (total, fw))
 
@@ -709,7 +699,7 @@ class uploader(object):
             try:
                 report_crc = self.__recv_int()
                 break
-            except Exception:  # noqa: BLE001
+            except Exception:
                 continue
 
         if time.time() >= deadline:
@@ -738,7 +728,7 @@ class uploader(object):
         else:
             try:
                 self.extf_maxsize = self.__getInfo(uploader.INFO_EXTF_SIZE)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 print("Could not get external flash size, assuming 0")
                 self.extf_maxsize = 0
                 self.__sync()
@@ -746,13 +736,6 @@ class uploader(object):
         self.board_type = self.__getInfo(uploader.INFO_BOARD_ID)
         self.board_rev = self.__getInfo(uploader.INFO_BOARD_REV)
         self.fw_maxsize = self.__getInfo(uploader.INFO_FLASH_SIZE)
-
-        if self.identify_only:
-            # Only run if we are trying to identify the board
-            try:
-                self.git_hash_bl = self.__getBootloaderSoftware()
-            except Exception:  # noqa: BLE001
-                self.__sync()
 
     def dump_board_info(self):
         # OTP added in v4:
@@ -783,7 +766,7 @@ class uploader(object):
                     x = x[::-1]  # reverse the bytes
                     print(binascii.hexlify(x).decode('Latin-1'), end='')  # show user
                 print('')
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # ignore bad character encodings
                 pass
 
@@ -856,9 +839,6 @@ class uploader(object):
             print("  board_type: %u" % self.board_type)
         print("  board_rev: %u" % self.board_rev)
 
-        if hasattr(self, "git_hash_bl") and self.git_hash_bl is not None:
-            print("  git hash (Bootloader): %s" % self.git_hash_bl)
-
         print("Identification complete")
 
     def board_name_for_board_id(self, board_id):
@@ -885,8 +865,10 @@ class uploader(object):
                     filepath = os.path.join(hwdef_dir, adir, "hwdef.dat")
                     if not os.path.exists(filepath):
                         continue
-                    with open(filepath) as in_file:
-                        text = in_file.readlines()
+                    fh = open(filepath)
+                    if fh is None:
+                        continue
+                    text = fh.readlines()
                     for line in text:
                         m = re.match(r"^\s*APJ_BOARD_ID\s+(\d+)\s*$", line)
                         if m is None:
@@ -896,23 +878,9 @@ class uploader(object):
             if len(ret) == 0:
                 return None
             return " or ".join(ret)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             print("Failed to get name: %s" % str(e))
         return None
-
-    # Verify firmware version on board matches provided version
-    def verify_firmware_is(self, fw, boot_delay=None):
-        if self.bl_rev == 2:
-            self.__verify_v2("Verify ", fw)
-        else:
-            self.__verify_v3("Verify ", fw)
-
-        if boot_delay is not None:
-            self.__set_boot_delay(boot_delay)
-
-        print("\nRebooting.\n")
-        self.__reboot()
-        self.port.close()
 
     # upload the firmware
     def upload(self, fw, force=False, boot_delay=None):
@@ -980,7 +948,7 @@ class uploader(object):
 
         try:
             self.port.baudrate = self.baudrate_flightstack[self.baudrate_flightstack_idx]
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
         return True
@@ -1006,11 +974,11 @@ class uploader(object):
             self.__send(uploader.NSH_REBOOT)
             self.port.flush()
             self.port.baudrate = self.baudrate_bootloader
-        except Exception:  # noqa: BLE001
+        except Exception:
             try:
                 self.port.flush()
                 self.port.baudrate = self.baudrate_bootloader
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
         return True
@@ -1084,7 +1052,7 @@ def find_bootloader(up, port):
             print("Found board %x,%x bootloader rev %x on %s" % (up.board_type, up.board_rev, up.bl_rev, port))
             return True
 
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
         reboot_sent = up.send_reboot()
@@ -1152,8 +1120,6 @@ def main():
     )
     parser.add_argument('--download', action='store_true', default=False, help='download firmware from board')
     parser.add_argument('--identify', action="store_true", help="Do not flash firmware; simply dump information about board")
-    parser.add_argument('--verify-firmware-is', action="store_true",
-                        help="Do not flash firmware; verify that the firmware on the board matches the supplied firmware")
     parser.add_argument('--no-extf', action="store_true", help="Do not attempt external flash operations")
     parser.add_argument('--erase-extflash', type=lambda x: int(x, 0), default=None,
                         help="Erase sectors containing specified amount of bytes from ext flash")
@@ -1196,10 +1162,9 @@ def main():
                                   args.source_system,
                                   args.source_component,
                                   args.no_extf,
-                                  args.force_erase,
-                                  args.identify)
+                                  args.force_erase)
 
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     if not is_WSL and not is_WSL2 and "win32" not in _platform:
                         # open failed, WSL must cycle through all ttyS* ports quickly but rate limit everything else
                         print("Exception creating uploader: %s" % str(e))
@@ -1218,8 +1183,6 @@ def main():
                         up.dump_board_info()
                     elif args.download:
                         up.download(args.firmware)
-                    elif args.verify_firmware_is:
-                        up.verify_firmware_is(fw, boot_delay=args.boot_delay)
                     elif args.erase_extflash:
                         up.erase_extflash('Erase ExtF', args.erase_extflash)
                         print("\nExtF Erase Finished")

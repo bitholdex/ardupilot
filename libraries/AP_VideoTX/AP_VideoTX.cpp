@@ -250,7 +250,7 @@ uint8_t AP_VideoTX::update_power_dbm(uint8_t power, PowerActive active)
     _power_levels[VTX_MAX_POWER_LEVELS-1].dbm = power;
     _power_levels[VTX_MAX_POWER_LEVELS-1].level = 255;
     _power_levels[VTX_MAX_POWER_LEVELS-1].dac = 255;
-    _power_levels[VTX_MAX_POWER_LEVELS-1].mw = uint16_t(roundf(powf(10, power * 0.1f)));
+    _power_levels[VTX_MAX_POWER_LEVELS-1].mw = uint16_t(roundf(powf(10, power / 10.0f)));
     _power_levels[VTX_MAX_POWER_LEVELS-1].active = active;
     debug("non-standard power %ddbm -> %dmw", power, _power_levels[VTX_MAX_POWER_LEVELS-1].mw);
     return VTX_MAX_POWER_LEVELS-1;
@@ -276,22 +276,9 @@ void AP_VideoTX::set_power_mw(uint16_t power)
     for (uint8_t i = 0; i < VTX_MAX_POWER_LEVELS; i++) {
         if (power == _power_levels[i].mw) {
             _current_power = i;
-            return;
+            break;
         }
     }
-    // power 0 (pit mode) should always match the built-in 0mW entry; bail
-    // here so it can never reach log10f below
-    if (power == 0) {
-        return;
-    }
-    // non-standard value (e.g. Tramp 2500mW): stash it in the custom slot
-    PowerLevel &slot = _power_levels[VTX_MAX_POWER_LEVELS - 1];
-    slot.mw = power;
-    slot.dbm = uint8_t(roundf(10.0f * log10f(float(power))));
-    slot.level = 255;
-    slot.dac = 255;
-    slot.active = PowerActive::Active;
-    _current_power = VTX_MAX_POWER_LEVELS - 1;
 }
 
 // set the power "level"
@@ -414,10 +401,6 @@ bool AP_VideoTX::update_power() const {
             && _power_levels[i].active != PowerActive::Inactive) {
             return true;
         }
-    }
-    // Tramp accepts arbitrary mW; the table check above is SmartAudio-only
-    if (_power_mw > 0 && is_provider_enabled(VTXType::Tramp)) {
-        return true;
     }
     // asked for something unsupported - only SA2.1 allows this and will have already provided a list
     return false;
@@ -545,11 +528,6 @@ void AP_VideoTX::change_power(int8_t position)
             debug("selected power %dmw", power);
             break;
         }
-    }
-
-    if (position == 5 && power < _max_power_mw) {
-        power = _max_power_mw;
-        debug("selected power %dmw", power);
     }
 
     if (power == 0) {

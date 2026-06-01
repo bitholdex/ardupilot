@@ -6,7 +6,6 @@
 
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Camera/AP_Camera.h>
-#include <AP_Camera/AP_Camera_Backend.h>
 #include <AP_Gripper/AP_Gripper.h>
 #include <AP_Parachute/AP_Parachute.h>
 #include <AP_ServoRelayEvents/AP_ServoRelayEvents.h>
@@ -32,7 +31,7 @@ bool AP_Mission::start_command_do_aux_function(const AP_Mission::Mission_Command
     default:
         return false;
     }
-    rc().run_aux_function(function, pos, RC_Channel::AuxFuncTrigger::Source::MISSION, cmd.index);
+    rc().run_aux_function(function, pos, RC_Channel::AuxFuncTriggerSource::MISSION);
     return true;
 }
 #endif  // AP_RC_CHANNEL_ENABLED
@@ -135,18 +134,21 @@ bool AP_Mission::start_command_camera(const AP_Mission::Mission_Command& cmd)
         return true;
 
     case MAV_CMD_DO_SET_CAM_TRIGG_DIST:
-        return camera->handle_mav_DO_SET_CAM_TRIGG_DISTANCE(
-            cmd.content.cam_trigg_dist.camera_id,
-            cmd.content.cam_trigg_dist.trigger,
-            cmd.content.cam_trigg_dist.meters
-        ) == MAV_RESULT_ACCEPTED;
+        camera->set_trigger_distance(cmd.content.cam_trigg_dist.meters);
+        if (cmd.content.cam_trigg_dist.trigger == 1) {
+            camera->take_picture();
+        }
+        return true;
 
     case MAV_CMD_SET_CAMERA_ZOOM:
-        return camera->handle_mav_SET_CAMERA_ZOOM(
-            cmd.content.set_camera_zoom.camera_id,
-            (CAMERA_ZOOM_TYPE)cmd.content.set_camera_zoom.zoom_type,
-            cmd.content.set_camera_zoom.zoom_value
-        ) == MAV_RESULT_ACCEPTED;
+        if (cmd.content.set_camera_zoom.zoom_type == ZOOM_TYPE_CONTINUOUS) {
+            return camera->set_zoom(ZoomType::RATE, cmd.content.set_camera_zoom.zoom_value);
+        }
+        if (cmd.content.set_camera_zoom.zoom_type == ZOOM_TYPE_RANGE) {
+            return camera->set_zoom(ZoomType::PCT, cmd.content.set_camera_zoom.zoom_value);
+        }
+        return false;
+
     case MAV_CMD_SET_CAMERA_FOCUS:
         // accept any of the auto focus types
         if ((cmd.content.set_camera_focus.focus_type == FOCUS_TYPE_AUTO) ||
@@ -328,8 +330,8 @@ bool AP_Mission::start_command_do_gimbal_manager_pitchyaw(const AP_Mission::Miss
     }
 
     // handle angle target
-    const bool pitch_angle_valid = abs(cmd.content.gimbal_manager_pitchyaw.pitch_angle_deg) <= 90;
-    const bool yaw_angle_valid = abs(cmd.content.gimbal_manager_pitchyaw.yaw_angle_deg) <= 360;
+    const bool pitch_angle_valid = !isnan(cmd.content.gimbal_manager_pitchyaw.pitch_angle_deg) && (fabsF(cmd.content.gimbal_manager_pitchyaw.pitch_angle_deg) <= 90);
+    const bool yaw_angle_valid = !isnan(cmd.content.gimbal_manager_pitchyaw.yaw_angle_deg) && (fabsF(cmd.content.gimbal_manager_pitchyaw.yaw_angle_deg) <= 360);
     if (pitch_angle_valid && yaw_angle_valid) {
         mount->set_angle_target(gimbal_instance, 0, cmd.content.gimbal_manager_pitchyaw.pitch_angle_deg, cmd.content.gimbal_manager_pitchyaw.yaw_angle_deg, cmd.content.gimbal_manager_pitchyaw.flags & GIMBAL_MANAGER_FLAGS_YAW_LOCK);
         return true;

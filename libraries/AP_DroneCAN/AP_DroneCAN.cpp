@@ -50,7 +50,6 @@
 #include <AP_OpenDroneID/AP_OpenDroneID.h>
 #include <AP_Mount/AP_Mount_Xacti.h>
 #include <string.h>
-#include <AP_Servo_Telem/AP_Servo_Telem.h>
 
 #if AP_DRONECAN_SERIAL_ENABLED
 #include "AP_DroneCAN_serial.h"
@@ -86,6 +85,8 @@ extern const AP_HAL::HAL& hal;
 #endif
 
 #define AP_DRONECAN_GETSET_TIMEOUT_MS 100       // timeout waiting for response from node after 0.1 sec
+
+#define debug_dronecan(level_debug, fmt, args...) do { AP::can().log_text(level_debug, "DroneCAN", fmt, ##args); } while (0)
 
 // Translation of all messages from DroneCAN structures into AP structures is done
 // in AP_DroneCAN and not in corresponding drivers.
@@ -127,7 +128,7 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
     // @Param: OPTION
     // @DisplayName: DroneCAN options
     // @Description: Option flags
-    // @Bitmask: 0:ClearDNADatabase,1:IgnoreDNANodeConflicts,2:EnableCanfd,3:IgnoreDNANodeUnhealthy,4:SendServoAsPWM,5:SendGNSS,6:UseHimarkServo,7:HobbyWingESC,8:EnableStats,9:EnableFlexDebug,10:SecondaryAllowExtendedFrames
+    // @Bitmask: 0:ClearDNADatabase,1:IgnoreDNANodeConflicts,2:EnableCanfd,3:IgnoreDNANodeUnhealthy,4:SendServoAsPWM,5:SendGNSS,6:UseHimarkServo,7:HobbyWingESC,8:EnableStats,9:EnableFlexDebug
     // @User: Advanced
     AP_GROUPINFO("OPTION", 5, AP_DroneCAN, _options, 0),
     
@@ -141,7 +142,7 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
 
     // @Param: ESC_OF
     // @DisplayName: ESC Output channels offset
-    // @Description: Offset for ESC numbering in DroneCAN ESC RawCommand messages. This allows for more efficient packing of ESC command messages. If your ESCs are on servo outputs 5 to 8 and you set this parameter to 4 then the ESC RawCommand will be sent with the first 4 slots filled. This can be used for more efficient usage of CAN bandwidth
+    // @Description: Offset for ESC numbering in DroneCAN ESC RawCommand messages. This allows for more efficient packing of ESC command messages. If your ESCs are on servo functions 5 to 8 and you set this parameter to 4 then the ESC RawCommand will be sent with the first 4 slots filled. This can be used for more efficient usage of CAN bandwidth
     // @Range: 0 18
     // @User: Advanced
     AP_GROUPINFO("ESC_OF", 7, AP_DroneCAN, _esc_offset, 0),
@@ -194,7 +195,7 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
     // @Param: S1_IDX
     // @DisplayName: DroneCAN Serial1 index
     // @Description: Serial port number on remote CAN node
-    // @Range: -1 100
+    // @Range: 0 100
     // @Values: -1:Disabled,0:Serial0,1:Serial1,2:Serial2,3:Serial3,4:Serial4,5:Serial5,6:Serial6
     // @RebootRequired: True
     // @User: Advanced
@@ -289,6 +290,8 @@ _dna_server(*this, canard_iface, driver_index)
         _SRV_conf[i].esc_pending = false;
         _SRV_conf[i].servo_pending = false;
     }
+
+    debug_dronecan(AP_CANManager::LOG_INFO, "AP_DroneCAN constructed\n\r");
 }
 
 AP_DroneCAN::~AP_DroneCAN()
@@ -307,17 +310,20 @@ AP_DroneCAN *AP_DroneCAN::get_dronecan(uint8_t driver_index)
 bool AP_DroneCAN::add_interface(AP_HAL::CANIface* can_iface)
 {
     if (!canard_iface.add_interface(can_iface)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "DroneCAN: can't add DroneCAN interface\n\r");
         return false;   
     }
     return true;
 }
 
-void AP_DroneCAN::init(uint8_t driver_index)
+void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
 {
     if (driver_index != _driver_index) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "DroneCAN: init called with wrong driver_index");
         return;
     }
     if (_initialized) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "DroneCAN: init called more than once\n\r");
         return;
     }
     uint8_t node = _dronecan_node;
@@ -344,6 +350,7 @@ void AP_DroneCAN::init(uint8_t driver_index)
 
     mem_pool = NEW_NOTHROW uint32_t[_pool_size/sizeof(uint32_t)];
     if (mem_pool == nullptr) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "DroneCAN: Failed to allocate memory pool\n\r");
         return;
     }
     canard_iface.init(mem_pool, (_pool_size/sizeof(uint32_t))*sizeof(uint32_t), node);
@@ -356,53 +363,49 @@ void AP_DroneCAN::init(uint8_t driver_index)
 
     //Start Servers
     if (!_dna_server.init(unique_id, uid_len, node)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "DroneCAN: Failed to start DNA Server\n\r");
         return;
     }
 
     // Roundup all subscribers from supported drivers
-    bool subscribed = true;
 #if AP_GPS_DRONECAN_ENABLED
-    subscribed = subscribed && AP_GPS_DroneCAN::subscribe_msgs(this);
+    AP_GPS_DroneCAN::subscribe_msgs(this);
 #endif
 #if AP_COMPASS_DRONECAN_ENABLED
-    subscribed = subscribed && AP_Compass_DroneCAN::subscribe_msgs(this);
+    AP_Compass_DroneCAN::subscribe_msgs(this);
 #endif
 #if AP_BARO_DRONECAN_ENABLED
-    subscribed = subscribed && AP_Baro_DroneCAN::subscribe_msgs(this);
+    AP_Baro_DroneCAN::subscribe_msgs(this);
 #endif
-    subscribed = subscribed && AP_BattMonitor_DroneCAN::subscribe_msgs(this);
+    AP_BattMonitor_DroneCAN::subscribe_msgs(this);
 #if AP_AIRSPEED_DRONECAN_ENABLED
-    subscribed = subscribed && AP_Airspeed_DroneCAN::subscribe_msgs(this);
+    AP_Airspeed_DroneCAN::subscribe_msgs(this);
 #endif
 #if AP_OPTICALFLOW_HEREFLOW_ENABLED
-    subscribed = subscribed && AP_OpticalFlow_HereFlow::subscribe_msgs(this);
+    AP_OpticalFlow_HereFlow::subscribe_msgs(this);
 #endif
 #if AP_RANGEFINDER_DRONECAN_ENABLED
-    subscribed = subscribed && AP_RangeFinder_DroneCAN::subscribe_msgs(this);
+    AP_RangeFinder_DroneCAN::subscribe_msgs(this);
 #endif
 #if AP_RCPROTOCOL_DRONECAN_ENABLED
-    subscribed = subscribed && AP_RCProtocol_DroneCAN::subscribe_msgs(this);
+    AP_RCProtocol_DroneCAN::subscribe_msgs(this);
 #endif
 #if AP_EFI_DRONECAN_ENABLED
-    subscribed = subscribed && AP_EFI_DroneCAN::subscribe_msgs(this);
+    AP_EFI_DroneCAN::subscribe_msgs(this);
 #endif
 
 #if AP_PROXIMITY_DRONECAN_ENABLED
-    subscribed = subscribed && AP_Proximity_DroneCAN::subscribe_msgs(this);
+    AP_Proximity_DroneCAN::subscribe_msgs(this);
 #endif
 #if HAL_MOUNT_XACTI_ENABLED
-    subscribed = subscribed && AP_Mount_Xacti::subscribe_msgs(this);
+    AP_Mount_Xacti::subscribe_msgs(this);
 #endif
 #if AP_TEMPERATURE_SENSOR_DRONECAN_ENABLED
-    subscribed = subscribed && AP_TemperatureSensor_DroneCAN::subscribe_msgs(this);
+    AP_TemperatureSensor_DroneCAN::subscribe_msgs(this);
 #endif
 #if AP_RPM_DRONECAN_ENABLED
-    subscribed = subscribed && AP_RPM_DroneCAN::subscribe_msgs(this);
+    AP_RPM_DroneCAN::subscribe_msgs(this);
 #endif
-
-    if (!subscribed) {
-        AP_BoardConfig::allocation_error("DroneCAN callback");
-    }
 
     act_out_array.set_timeout_ms(5);
     act_out_array.set_priority(CANARD_TRANSFER_PRIORITY_HIGH);
@@ -498,6 +501,7 @@ void AP_DroneCAN::init(uint8_t driver_index)
     hal.util->snprintf(_thread_name, sizeof(_thread_name), "dronecan_%u", driver_index);
 
     if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DroneCAN::loop, void), _thread_name, DRONECAN_STACK_SIZE, AP_HAL::Scheduler::PRIORITY_CAN, 0)) {
+        debug_dronecan(AP_CANManager::LOG_ERROR, "DroneCAN: couldn't create thread\n\r");
         return;
     }
 
@@ -506,6 +510,7 @@ void AP_DroneCAN::init(uint8_t driver_index)
 #endif
 
     _initialized = true;
+    debug_dronecan(AP_CANManager::LOG_INFO, "DroneCAN: init done\n\r");
 }
 
 void AP_DroneCAN::loop(void)
@@ -575,7 +580,7 @@ void AP_DroneCAN::loop(void)
 void AP_DroneCAN::hobbywing_ESC_update(void)
 {
     if (hal.util->get_soft_armed()) {
-        // don't update ID database while armed, as it can cause
+        // don't update ID database while disarmed, as it can cause
         // some hobbywing ESCs to stutter
         return;
     }
@@ -1054,11 +1059,8 @@ void AP_DroneCAN::notify_state_send()
     }
 #endif // HAL_BUILD_AP_PERIPH
 
-    // beware that
-    // ARDUPILOT_INDICATION_NOTIFYSTATE_VEHICLE_YAW_EARTH_CENTIDEGREES
-    // is strange; it's number of degrees *counter-clockwise* from North.
     msg.aux_data_type = ARDUPILOT_INDICATION_NOTIFYSTATE_VEHICLE_YAW_EARTH_CENTIDEGREES;
-    uint16_t yaw_cd = (uint16_t)(360.0f - AP::ahrs().get_yaw_deg())*100.0f;
+    uint16_t yaw_cd = (uint16_t)(360.0f - degrees(AP::ahrs().get_yaw()))*100.0f;
     const uint8_t *data = (uint8_t *)&yaw_cd;
     for (uint8_t i=0; i<2; i++) {
         msg.aux_data.data[i] = data[i];
@@ -1103,42 +1105,36 @@ void AP_DroneCAN::gnss_send_fix()
     }
     pkt.sats_used = gps.num_sats();
     switch (gps.status()) {
-    case AP_GPS_FixType::NO_GPS:
-    case AP_GPS_FixType::NONE:
+    case AP_GPS::GPS_Status::NO_GPS:
+    case AP_GPS::GPS_Status::NO_FIX:
         pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_NO_FIX;
         pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_SINGLE;
         pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_DGPS_OTHER;
         break;
-    case AP_GPS_FixType::FIX_2D:
+    case AP_GPS::GPS_Status::GPS_OK_FIX_2D:
         pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_2D_FIX;
         pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_SINGLE;
         pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_DGPS_OTHER;
         break;
-    case AP_GPS_FixType::FIX_3D:
+    case AP_GPS::GPS_Status::GPS_OK_FIX_3D:
         pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
         pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_SINGLE;
         pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_DGPS_OTHER;
         break;
-    case AP_GPS_FixType::DGPS:
+    case AP_GPS::GPS_Status::GPS_OK_FIX_3D_DGPS:
         pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
         pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_DGPS;
         pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_DGPS_SBAS;
         break;
-    case AP_GPS_FixType::RTK_FLOAT:
+    case AP_GPS::GPS_Status::GPS_OK_FIX_3D_RTK_FLOAT:
         pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
         pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
         pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FLOAT;
         break;
-    case AP_GPS_FixType::RTK_FIXED:
+    case AP_GPS::GPS_Status::GPS_OK_FIX_3D_RTK_FIXED:
         pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
         pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
         pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FIXED;
-        break;
-    case AP_GPS_FixType::STATIC:
-    case AP_GPS_FixType::PPP:
-        pkt.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
-        pkt.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_PPP; // Static is not representable in DroneCAN.
-        pkt.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FIXED; // There is no submode for static or PPP
         break;
     }
 
@@ -1384,83 +1380,62 @@ void AP_DroneCAN::handle_traffic_report(const CanardRxTransfer& transfer, const 
 /*
   handle actuator status message
  */
-#if AP_SERVO_TELEM_ENABLED
 void AP_DroneCAN::handle_actuator_status(const CanardRxTransfer& transfer, const uavcan_equipment_actuator_Status& msg)
 {
-    AP_Servo_Telem *servo_telem = AP_Servo_Telem::get_singleton();
-    if (servo_telem == nullptr) {
-        return;
-    }
-
-    const AP_Servo_Telem::TelemetryData telem_data {
-        .measured_position = degrees(msg.position),
-        .force = msg.force,
-        .speed = msg.speed,
-        .duty_cycle = msg.power_rating_pct,
-        .present_types = AP_Servo_Telem::TelemetryData::Types::MEASURED_POSITION |
-                         AP_Servo_Telem::TelemetryData::Types::FORCE |
-                         AP_Servo_Telem::TelemetryData::Types::SPEED |
-                         AP_Servo_Telem::TelemetryData::Types::DUTY_CYCLE
-    };
-
-    servo_telem->update_telem_data(msg.actuator_id - 1, telem_data);
-}
+#if HAL_LOGGING_ENABLED
+    // log as CSRV message
+    AP::logger().Write_ServoStatus(AP_HAL::micros64(),
+                                   msg.actuator_id,
+                                   msg.position,
+                                   msg.force,
+                                   msg.speed,
+                                   msg.power_rating_pct,
+                                   0, 0, 0, 0, 0, 0);
 #endif
+}
 
-#if AP_DRONECAN_HIMARK_SERVO_SUPPORT && AP_SERVO_TELEM_ENABLED
+#if AP_DRONECAN_HIMARK_SERVO_SUPPORT
 /*
   handle himark ServoInfo message
  */
 void AP_DroneCAN::handle_himark_servoinfo(const CanardRxTransfer& transfer, const com_himark_servo_ServoInfo &msg)
 {
-    AP_Servo_Telem *servo_telem = AP_Servo_Telem::get_singleton();
-    if (servo_telem == nullptr) {
-        return;
-    }
-
-    const AP_Servo_Telem::TelemetryData telem_data {
-        .command_position = msg.pos_cmd * 0.01,
-        .measured_position = msg.pos_sensor * 0.01,
-        .voltage = msg.voltage * 0.01,
-        .current = msg.current * 0.01,
-        .motor_temperature_cdeg = int16_t(((msg.motor_temp * 0.2) - 40) * 100),
-        .pcb_temperature_cdeg = int16_t(((msg.pcb_temp * 0.2) - 40) * 100),
-        .status_flags = msg.error_status,
-        .present_types = AP_Servo_Telem::TelemetryData::Types::COMMANDED_POSITION |
-                         AP_Servo_Telem::TelemetryData::Types::MEASURED_POSITION |
-                         AP_Servo_Telem::TelemetryData::Types::VOLTAGE |
-                         AP_Servo_Telem::TelemetryData::Types::CURRENT |
-                         AP_Servo_Telem::TelemetryData::Types::MOTOR_TEMP |
-                         AP_Servo_Telem::TelemetryData::Types::PCB_TEMP |
-                         AP_Servo_Telem::TelemetryData::Types::STATUS
-    };
-
-    servo_telem->update_telem_data(msg.servo_id - 1, telem_data);
+#if HAL_LOGGING_ENABLED
+    // log as CSRV message
+    AP::logger().Write_ServoStatus(AP_HAL::micros64(),
+                                   msg.servo_id,
+                                   msg.pos_sensor*0.01,
+                                   0,
+                                   0,
+                                   0,
+                                   msg.pos_cmd*0.01,
+                                   msg.voltage*0.01,
+                                   msg.current*0.01,
+                                   msg.motor_temp*0.2-40,
+                                   msg.pcb_temp*0.2-40,
+                                   msg.error_status);
+#endif
 }
 #endif // AP_DRONECAN_HIMARK_SERVO_SUPPORT
 
 #if AP_DRONECAN_VOLZ_FEEDBACK_ENABLED
 void AP_DroneCAN::handle_actuator_status_Volz(const CanardRxTransfer& transfer, const com_volz_servo_ActuatorStatus& msg)
 {
-    AP_Servo_Telem *servo_telem = AP_Servo_Telem::get_singleton();
-    if (servo_telem == nullptr) {
-        return;
-    }
-
-    const AP_Servo_Telem::TelemetryData telem_data {
-        .measured_position = degrees(msg.actual_position),
-        .voltage = msg.voltage * 0.2,
-        .current = msg.current * 0.025,
-        .duty_cycle = uint8_t(msg.motor_pwm * (100.0/255.0)),
-        .motor_temperature_cdeg = int16_t((msg.motor_temperature - 50) * 100),
-        .present_types = AP_Servo_Telem::TelemetryData::Types::MEASURED_POSITION |
-                         AP_Servo_Telem::TelemetryData::Types::VOLTAGE |
-                         AP_Servo_Telem::TelemetryData::Types::CURRENT |
-                         AP_Servo_Telem::TelemetryData::Types::DUTY_CYCLE |
-                         AP_Servo_Telem::TelemetryData::Types::MOTOR_TEMP
-    };
-
-    servo_telem->update_telem_data(msg.actuator_id - 1, telem_data);
+#if HAL_LOGGING_ENABLED
+    AP::logger().WriteStreaming(
+        "CVOL",
+        "TimeUS,Id,Pos,Cur,V,Pow,T",
+        "s#dAv%O",
+        "F-00000",
+        "QBfffBh",
+        AP_HAL::micros64(),
+        msg.actuator_id,
+        ToDeg(msg.actual_position),
+        msg.current * 0.025f,
+        msg.voltage * 0.2f,
+        uint8_t(msg.motor_pwm * (100.0/255.0)),
+        int16_t(msg.motor_temperature) - 50);
+#endif
 }
 #endif
 
@@ -1957,24 +1932,6 @@ void AP_DroneCAN::logging(void)
         return;
     }
     const auto &s = *stats;
-
-// @LoggerMessage: CANS
-// @Description: CAN Bus Statistics
-// @Field: TimeUS: Time since system startup
-// @Field: I: driver index
-// @Field: T: transmit success count
-// @Field: Trq: transmit request count
-// @Field: Trej: transmit reject count
-// @Field: Tov: transmit overflow count
-// @Field: Tto: transmit timeout count
-// @Field: Tab: transmit abort count
-// @Field: R: receive count
-// @Field: Rov: receive overflow count
-// @Field: Rer: receive error count
-// @Field: Bo: bus offset error count
-// @Field: Etx: ESC successful send count
-// @Field: Stx: Servo successful send count
-// @Field: Ftx: ESC/Servo failed-to-send count
     AP::logger().WriteStreaming("CANS",
                                 "TimeUS,I,T,Trq,Trej,Tov,Tto,Tab,R,Rov,Rer,Bo,Etx,Stx,Ftx",
                                 "s#-------------",
@@ -2005,11 +1962,10 @@ bool AP_DroneCAN::add_11bit_driver(CANSensor *sensor)
 }
 
 // handler for outgoing frames for auxillary drivers
-bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint32_t timeout_us)
+bool AP_DroneCAN::write_aux_frame(AP_HAL::CANFrame &out_frame, const uint64_t timeout_us)
 {
-    if (out_frame.isExtended() && !option_is_set(Options::ALLOW_EXTENDED_AUX)) {
-        // don't allow extended frames to be sent by auxillary driver unless
-        // the user has specifically allowed it
+    if (out_frame.isExtended()) {
+        // don't allow extended frames to be sent by auxillary driver
         return false;
     }
     return canard_iface.write_aux_frame(out_frame, timeout_us);

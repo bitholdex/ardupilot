@@ -31,7 +31,6 @@
  */
 
 #include <AP_HAL/AP_HAL.h>
-#include "AP_InertialSensor_rate_config.h"
 #include "AP_InertialSensor_Invensensev3.h"
 #include <utility>
 #include <stdio.h>
@@ -130,14 +129,12 @@ extern const AP_HAL::HAL& hal;
 
 // ICM42xxx specific registers
 #define INV3REG_42XXX_INTF_CONFIG1  0x4d
-#define INV3REG_42XXX_INTF_CONFIG5  0x7b    // bank1
 
 // WHOAMI values
 #define INV3_ID_ICM40605      0x33
 #define INV3_ID_ICM40609      0x3b
 #define INV3_ID_ICM42605      0x42
-#define INV3_ID_ICM42688_P    0x47
-#define INV3_ID_ICM42688_V    0xDB
+#define INV3_ID_ICM42688      0x47
 #define INV3_ID_IIM42652      0x6f
 #define INV3_ID_IIM42653      0x56
 #define INV3_ID_ICM42670      0x67
@@ -173,20 +170,7 @@ struct PACKED FIFODataHighRes {
 static_assert(sizeof(FIFOData) == 16, "FIFOData must be 16 bytes");
 static_assert(sizeof(FIFODataHighRes) == 20, "FIFODataHighRes must be 20 bytes");
 
-/*
-    Ideally we would like the fifo buffer to be big enough to hold all of the packets that might have been
-    accumulated between reads. This is so that they can all be read in a single SPI transaction and avoid
-    the overhead of multiple reads. The maximum number of samples for 20-bit high res that can be store in the
-    fifo is 2k/20, or 105 samples. The likely maximum required for dynamic fifo is the output data rate / 2x loop rate,
-    4k/400 or 10 samples in the extreme case we are trying to support. We need double this to account for the
-    fact that we might only have 9 samples at the time the fifo is read and hence the next time it is read we
-    could have 19 sample
- */
-#if AP_INERTIALSENSOR_FAST_SAMPLE_WINDOW_ENABLED
-#define INV3_FIFO_BUFFER_LEN 24
-#else
 #define INV3_FIFO_BUFFER_LEN 8
-#endif
 
 AP_InertialSensor_Invensensev3::AP_InertialSensor_Invensensev3(AP_InertialSensor &imu,
                                                                AP_HAL::OwnPtr<AP_HAL::Device> _dev,
@@ -202,12 +186,12 @@ AP_InertialSensor_Invensensev3::~AP_InertialSensor_Invensensev3()
 #if HAL_INS_HIGHRES_SAMPLE
     if (highres_sampling) {
         if (fifo_buffer != nullptr) {
-            hal.util->free_type(fifo_buffer, INV3_FIFO_BUFFER_LEN * INV3_HIGHRES_SAMPLE_SIZE + 1, AP_HAL::Util::MEM_DMA_SAFE);
+            hal.util->free_type(fifo_buffer, INV3_FIFO_BUFFER_LEN * INV3_HIGHRES_SAMPLE_SIZE, AP_HAL::Util::MEM_DMA_SAFE);
         }
     } else
 #endif
     if (fifo_buffer != nullptr) {
-        hal.util->free_type(fifo_buffer, INV3_FIFO_BUFFER_LEN * INV3_SAMPLE_SIZE + 1, AP_HAL::Util::MEM_DMA_SAFE);
+        hal.util->free_type(fifo_buffer, INV3_FIFO_BUFFER_LEN * INV3_SAMPLE_SIZE, AP_HAL::Util::MEM_DMA_SAFE);
     }
 }
 
@@ -254,43 +238,6 @@ void AP_InertialSensor_Invensensev3::fifo_reset()
 
     notify_accel_fifo_reset(accel_instance);
     notify_gyro_fifo_reset(gyro_instance);
-}
-
-// see header for the per-variant rationale and datasheet references
-float AP_InertialSensor_Invensensev3::gyro_bias_limit_rads() const
-{
-    switch (inv3_type) {
-    case Invensensev3_Type::ICM42688:
-    case Invensensev3_Type::ICM45686:
-        return radians(2.0f);
-    case Invensensev3_Type::ICM42605:
-    case Invensensev3_Type::ICM40609:
-    case Invensensev3_Type::ICM42670:
-    case Invensensev3_Type::IIM42652:
-        return radians(3.0f);
-    case Invensensev3_Type::ICM40605:
-    case Invensensev3_Type::IIM42653:
-        break;
-    }
-    return AP_InertialSensor_Backend::gyro_bias_limit_rads();
-}
-
-float AP_InertialSensor_Invensensev3::gyro_bias_init_dps() const
-{
-    switch (inv3_type) {
-    case Invensensev3_Type::ICM42688:
-    case Invensensev3_Type::ICM45686:
-        return 1.0f;
-    case Invensensev3_Type::ICM42605:
-    case Invensensev3_Type::ICM40609:
-    case Invensensev3_Type::ICM42670:
-    case Invensensev3_Type::IIM42652:
-        return 1.5f;
-    case Invensensev3_Type::ICM40605:
-    case Invensensev3_Type::IIM42653:
-        break;
-    }
-    return AP_InertialSensor_Backend::gyro_bias_init_dps();
 }
 
 void AP_InertialSensor_Invensensev3::start()
@@ -419,10 +366,10 @@ void AP_InertialSensor_Invensensev3::start()
     // allocate fifo buffer
 #if HAL_INS_HIGHRES_SAMPLE
     if (highres_sampling) {
-        fifo_buffer = hal.util->malloc_type(INV3_FIFO_BUFFER_LEN * INV3_HIGHRES_SAMPLE_SIZE + 1, AP_HAL::Util::MEM_DMA_SAFE);
+        fifo_buffer = hal.util->malloc_type(INV3_FIFO_BUFFER_LEN * INV3_HIGHRES_SAMPLE_SIZE, AP_HAL::Util::MEM_DMA_SAFE);
     } else
 #endif
-    fifo_buffer = hal.util->malloc_type(INV3_FIFO_BUFFER_LEN * INV3_SAMPLE_SIZE + 1, AP_HAL::Util::MEM_DMA_SAFE);
+    fifo_buffer = hal.util->malloc_type(INV3_FIFO_BUFFER_LEN * INV3_SAMPLE_SIZE, AP_HAL::Util::MEM_DMA_SAFE);
 
     if (fifo_buffer == nullptr) {
         AP_HAL::panic("Invensensev3: Unable to allocate FIFO buffer");
@@ -455,21 +402,6 @@ bool AP_InertialSensor_Invensensev3::update()
     _publish_temperature(accel_instance, temp_filtered);
 
     return true;
-}
-
-void AP_InertialSensor_Invensensev3::set_primary(bool _is_primary)
-{
-#if AP_INERTIALSENSOR_FAST_SAMPLE_WINDOW_ENABLED
-    if (_imu.is_dynamic_fifo_enabled(gyro_instance)) {
-        if (_is_primary) {
-            dev->adjust_periodic_callback(periodic_handle, backend_period_us);
-        } else {
-            // scale down non-primary to 2x loop rate, but no greater than the default sampling rate
-            dev->adjust_periodic_callback(periodic_handle,
-                                          1000000UL / constrain_int16(get_loop_rate_hz() * 2, 400, 1000));
-        }
-    }
-#endif
 }
 
 /*
@@ -594,8 +526,6 @@ void AP_InertialSensor_Invensensev3::read_fifo()
 
     uint8_t reg_counth;
     uint8_t reg_data;
-    uint8_t* samples = nullptr;
-    uint8_t* tfr_buffer = (uint8_t*)fifo_buffer;
 
     switch (inv3_type) {
     case Invensensev3_Type::ICM45686:
@@ -628,34 +558,22 @@ void AP_InertialSensor_Invensensev3::read_fifo()
 
     // adjust the periodic callback to be synchronous with the incoming data
     // this means that we rarely run read_fifo() without updating the sensor data
-    if (is_primary) {
-        dev->adjust_periodic_callback(periodic_handle, backend_period_us);
-    }
+    dev->adjust_periodic_callback(periodic_handle, backend_period_us);
 
     while (n_samples > 0) {
         uint8_t n = MIN(n_samples, INV3_FIFO_BUFFER_LEN);
-
-        // we don't use read_registers() here to ensure that the fifo buffer that we have allocated
-        // gets passed all the way down to the SPI DMA handling. This involves one transfer to send
-        // the register read and then another using the same buffer and length which is handled specially
-        // for the read
-        tfr_buffer[0] = reg_data | BIT_READ_FLAG;
-        // transfer will also be sending data, make sure that data is zero
-        memset(tfr_buffer + 1, 0, n * fifo_sample_size);
-        if (!dev->transfer_fullduplex(tfr_buffer, n * fifo_sample_size + 1)) {
+        if (!block_read(reg_data, (uint8_t*)fifo_buffer, n * fifo_sample_size)) {
             goto check_registers;
         }
-        samples = tfr_buffer + 1;
-
 #if HAL_INS_HIGHRES_SAMPLE
         if (highres_sampling) {
-            if (!accumulate_highres_samples((FIFODataHighRes*)samples, n)) {
+            if (!accumulate_highres_samples((FIFODataHighRes*)fifo_buffer, n)) {
                 need_reset = true;
                 break;
             }
         } else
 #endif
-        if (!accumulate_samples((FIFOData*)samples, n)) {
+        if (!accumulate_samples((FIFOData*)fifo_buffer, n)) {
             need_reset = true;
             break;
         }
@@ -912,20 +830,7 @@ void AP_InertialSensor_Invensensev3::set_filter_and_scaling(void)
           producing constant output which causes a DC gyro bias
         */
         const uint8_t v = register_read(INV3REG_42XXX_INTF_CONFIG1);
-#if defined(INVENSENSEV3_CLKIN_BITMASK)
-        uint8_t intf_config1 = (v & 0x3F) | 0x40;
-        // we only support setting RTC mode on IIM42652 now
-        if ((INVENSENSEV3_CLKIN_BITMASK & (1U << gyro_instance)) && (inv3_type == Invensensev3_Type::IIM42652)) {
-            intf_config1 |= 0x04;   // enable RTC mode
-            // setup pin9 function to CLKIN
-            const uint8_t intf_config5 = register_read_bank(1, INV3REG_42XXX_INTF_CONFIG5);
-            register_write_bank(1, INV3REG_42XXX_INTF_CONFIG5, (intf_config5 & ~0x06) | 0x04);
-        }
-
-        register_write(INV3REG_42XXX_INTF_CONFIG1, intf_config1, true);
-#else
         register_write(INV3REG_42XXX_INTF_CONFIG1, (v & 0x3F) | 0x40, true);
-#endif
         break;
     }
     case Invensensev3_Type::ICM40605:
@@ -1045,8 +950,7 @@ bool AP_InertialSensor_Invensensev3::check_whoami(void)
     case INV3_ID_ICM40609:
         inv3_type = Invensensev3_Type::ICM40609;
         return true;
-    case INV3_ID_ICM42688_P:
-    case INV3_ID_ICM42688_V:
+    case INV3_ID_ICM42688:
         inv3_type = Invensensev3_Type::ICM42688;
         return true;
     case INV3_ID_ICM42605:

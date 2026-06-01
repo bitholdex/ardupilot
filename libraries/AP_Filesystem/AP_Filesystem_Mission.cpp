@@ -30,11 +30,7 @@
 #include <GCS_MAVLink/GCS.h>
 
 extern const AP_HAL::HAL& hal;
-
-// QURT HAL already has a declaration of errno in errno.h
-#if CONFIG_HAL_BOARD != HAL_BOARD_QURT
 extern int errno;
-#endif
 
 #define IDLE_TIMEOUT_MS 30000
 
@@ -206,7 +202,8 @@ int AP_Filesystem_Mission::stat(const char *name, struct stat *stbuf)
         return -1;
     }
     memset(stbuf, 0, sizeof(*stbuf));
-    stbuf->st_size = sizeof(struct header) + get_num_items(mtype) * MAVLINK_MSG_ID_MISSION_ITEM_INT_LEN;
+    // give fixed size to avoid needing to scan entire file
+    stbuf->st_size = 1024*1024;
     return 0;
 }
 

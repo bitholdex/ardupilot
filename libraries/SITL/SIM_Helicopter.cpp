@@ -42,14 +42,6 @@ Helicopter::Helicopter(const char *frame_str) :
         frame_type = HELI_FRAME_BLADE360;
         _time_delay = 40;
         nominal_rpm = 2100;
-    } else if (strstr(frame_str, "-ddvptail")) {
-        frame_type = HELI_FRAME_CONVENTIONAL_DDVPTAIL;
-        _time_delay = 50;
-        nominal_rpm = 1500;
-    } else if (strstr(frame_str, "-ddfptail")) {
-        frame_type = HELI_FRAME_CONVENTIONAL_DDFPTAIL;
-        _time_delay = 50;
-        nominal_rpm = 1500;
     } else {
         frame_type = HELI_FRAME_CONVENTIONAL;
         _time_delay = 50;
@@ -159,95 +151,6 @@ void Helicopter::update(const struct sitl_input &input)
 
         float yaw_cmd = 2.0f * tail_rotor - 1.0f; // convert range to -1 to 1
         float tail_rotor_torque = (21.6f * 2.96f * yaw_cmd - 2.96f * gyro.z) * sq(rpm[0]/nominal_rpm);
-        float tail_rotor_thrust =  -1.0f * tail_rotor_torque * izz / tr_dist;  //right pedal produces left body accel
-
-        // rotational acceleration, in rad/s/s, in body frame
-        rot_accel.x = _tpp_angle.x * Lb1s + Lv * velocity_air_bf.y;
-        rot_accel.y = _tpp_angle.y * Ma1s + Mu * velocity_air_bf.x;
-        rot_accel.z = tail_rotor_torque - eng_torque;
-
-        lateral_y_thrust = tail_rotor_thrust / mass + GRAVITY_MSS * _tpp_angle.x + Yv * velocity_air_bf.y;
-        lateral_x_thrust = -1.0f * GRAVITY_MSS * _tpp_angle.y + Xu * velocity_air_bf.x;
-        accel_body = Vector3f(lateral_x_thrust, lateral_y_thrust, -thrust / mass + velocity_air_bf.z * Zw);
-
-        break;
-    }
-
-    case HELI_FRAME_CONVENTIONAL_DDVPTAIL: {
-        // simulate a traditional helicopter with DDVP tail.  Simulates the tail rotor RSC by just applying a tailrsc multiplier to the tail rotor torque and thrust.
-        // If the code is not configured correctly, the tail rotor will not produce any torque or thrust.  The spool up is assumed to be the same as the main rotor.
-        // the H_TAIL_SPEED parameter must be set to 100 for the tail rotor to operate correctly. The tail RSC is hard coded to SERVO channel 7.
-
-        float Ma1s = 617.5f;
-        float Lb1s = 3588.6f;
-        float Mu = 0.003f;
-        float Lv = -0.006;
-        float Xu = -0.125;
-        float Yv = -0.375;
-        float Zw = -2.25;
-
-        float tailrsc = constrain_float((input.servos[6]-1000) / 1000.0f, 0, 1);
-
-        float tail_rotor = (_servos_delayed[3]-1000) / 1000.0f;
-
-        // thrust calculated based on 5 deg hover collective for 10lb aircraft at 1500RPM
-        float coll = 50.0f * (swash1+swash2+swash3) / 3.0f - 25.0f;
-        thrust = (rpm[0] / nominal_rpm) * thrust_scale * sq(nominal_rpm * 0.104667f) * coll;
-
-        // determine RPM
-        rpm[0] = update_rpm(rpm[0], rsc, eng_torque, coll, dt);
-
-        // Calculate rotor tip path plane angle
-        float roll_cyclic = 1.283 * (swash1 - swash2) / cyclic_scalar;
-        float pitch_cyclic = 1.48 * ((swash1+swash2) / 2.0f - swash3) / cyclic_scalar;
-        Vector2f ctrl_pos = Vector2f(roll_cyclic, pitch_cyclic);
-        update_rotor_dynamics(gyro, ctrl_pos, _tpp_angle, dt);
-
-        float yaw_cmd = 2.0f * tail_rotor - 1.0f; // convert range to -1 to 1
-        float tail_rotor_torque = (21.6f * 2.96f * yaw_cmd - 2.96f * gyro.z) * tailrsc * sq(rpm[0]/nominal_rpm);
-        float tail_rotor_thrust =  -1.0f * tail_rotor_torque * izz / tr_dist;  //right pedal produces left body accel
-
-        // rotational acceleration, in rad/s/s, in body frame
-        rot_accel.x = _tpp_angle.x * Lb1s + Lv * velocity_air_bf.y;
-        rot_accel.y = _tpp_angle.y * Ma1s + Mu * velocity_air_bf.x;
-        rot_accel.z = tail_rotor_torque - eng_torque;
-
-        lateral_y_thrust = tail_rotor_thrust / mass + GRAVITY_MSS * _tpp_angle.x + Yv * velocity_air_bf.y;
-        lateral_x_thrust = -1.0f * GRAVITY_MSS * _tpp_angle.y + Xu * velocity_air_bf.x;
-        accel_body = Vector3f(lateral_x_thrust, lateral_y_thrust, -thrust / mass + velocity_air_bf.z * Zw);
-
-        break;
-    }
-
-    case HELI_FRAME_CONVENTIONAL_DDFPTAIL: {
-        // simulate a traditional helicopter with DDFP tail.  Simulates the tail rotor by just applying a multiplier to the tail rotor command.
-        // If the code is not configured correctly, the tail rotor will not produce any torque or thrust.  
-
-        float Ma1s = 617.5f;
-        float Lb1s = 3588.6f;
-        float Mu = 0.003f;
-        float Lv = -0.006;
-        float Xu = -0.125;
-        float Yv = -0.375;
-        float Zw = -2.25;
-
-        // float tailrsc = constrain_float((input.servos[6]-1000) / 1000.0f, 0, 1);
-        float tail_rotor = (_servos_delayed[3]-1000) / 1000.0f;
-
-        // thrust calculated based on 5 deg hover collective for 10lb aircraft at 1500RPM
-        float coll = 50.0f * (swash1+swash2+swash3) / 3.0f - 25.0f;
-        thrust = (rpm[0] / nominal_rpm) * thrust_scale * sq(nominal_rpm * 0.104667f) * coll;
-
-        // determine RPM
-        rpm[0] = update_rpm(rpm[0], rsc, eng_torque, coll, dt);
-
-        // Calculate rotor tip path plane angle
-        float roll_cyclic = 1.283 * (swash1 - swash2) / cyclic_scalar;
-        float pitch_cyclic = 1.48 * ((swash1+swash2) / 2.0f - swash3) / cyclic_scalar;
-        Vector2f ctrl_pos = Vector2f(roll_cyclic, pitch_cyclic);
-        update_rotor_dynamics(gyro, ctrl_pos, _tpp_angle, dt);
-
-        float tail_rotor_torque = (21.6f * 2.96f - 2.96f * gyro.z) * sq(tail_rotor);
         float tail_rotor_thrust =  -1.0f * tail_rotor_torque * izz / tr_dist;  //right pedal produces left body accel
 
         // rotational acceleration, in rad/s/s, in body frame
@@ -478,6 +381,7 @@ float Helicopter::update_rpm(float curr_rpm, float throttle, float &engine_torqu
     static float rotor_runup_output;
     static uint8_t motor_status;
     float accel_scale;
+    float input_torque;
     float auto_ss_torque;
     float descent_torque;
     float rotor_torque;
@@ -486,6 +390,7 @@ float Helicopter::update_rpm(float curr_rpm, float throttle, float &engine_torqu
 
     //use this to make rpm model more realistic
     accel_scale = 100.0f;
+    input_torque = 0.0f;
 
     // calculate aerodynamic rotor drag torque
     rotor_torque = (sq(curr_rpm * 0.104667f) * (torque_mpog + torque_scale * powf(fabsf(collective),1.5f))) / izz;
@@ -510,13 +415,13 @@ float Helicopter::update_rpm(float curr_rpm, float throttle, float &engine_torqu
         engine_torque = 1.20f * throttle * engine_torque_max;
 
         // model clutch on gas heli 
-        float input_torque;
         if (throttle >= 0.15f && rpm_engine > curr_rpm) {
             input_torque = engine_torque;
         } else {
             input_torque = 0.0f;
         }
 
+        rpm_dot = 0.0f;
         // help spool down quickly go to zero
         if (throttle <= 0.15f && curr_rpm < 300) {
             rpm_dot = - 40.0f;
@@ -568,7 +473,6 @@ float Helicopter::update_rpm(float curr_rpm, float throttle, float &engine_torqu
         engine_torque = 0.333f * rotor_runup_output * engine_torque_max;
 
         // manage input torque so descent torque combined with engine torque doesn't allow rotor to overspeed
-        float input_torque;
         if (rotor_runup_output >= 1.0f && curr_rpm > nominal_rpm - 100.0f) {
             // want the rpm to seek the nominal rpm so set the input torque to only be that for nominal RPM
             input_torque = rotor_torque * sq(nominal_rpm / curr_rpm);
@@ -578,6 +482,7 @@ float Helicopter::update_rpm(float curr_rpm, float throttle, float &engine_torqu
             input_torque = engine_torque + descent_torque;
         }
 
+        rpm_dot = 0.0f;
         // Help spool down quickly got to zero 
         if (rotor_runup_output <= 0.0f && curr_rpm < 300) {
             rpm_dot = - 40.0f;

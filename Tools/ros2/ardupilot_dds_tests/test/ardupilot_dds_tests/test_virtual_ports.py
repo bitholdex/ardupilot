@@ -18,9 +18,8 @@ import launch_pytest
 import pytest
 
 from launch import LaunchDescription
-from launch_pytest.tools import process as process_tools
 
-WAIT_FOR_START_TIMEOUT = 5.0
+from launch_pytest.tools import process as process_tools
 
 
 @launch_pytest.fixture
@@ -45,7 +44,7 @@ def test_virtual_ports(launch_context, launch_description):
     virtual_ports = actions["virtual_ports"].action
 
     # Wait for process to start.
-    process_tools.wait_for_start_sync(launch_context, virtual_ports, timeout=WAIT_FOR_START_TIMEOUT)
+    process_tools.wait_for_start_sync(launch_context, virtual_ports, timeout=2)
 
     # Assert contents of output to stderr.
     def validate_output(output):

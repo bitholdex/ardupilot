@@ -273,7 +273,7 @@ public:
       DSHOT_LED3_OFF = 29,
     };
 
-    static constexpr uint8_t DSHOT_ZERO_THROTTLE = 48;
+    const uint8_t DSHOT_ZERO_THROTTLE = 48;
 
     enum DshotEscType {
       DSHOT_ESC_NONE = 0,
@@ -381,11 +381,6 @@ public:
       Writes gpio state to a channel
     */
     virtual void write_gpio(uint8_t chan, bool active) {};
-
-    /*
-      Force group trigger from all callers rather than just from the main thread
-    */
-    virtual void force_trigger_groups(bool onoff) {};
 
     /*
      * calculate the prescaler required to achieve the desire bitrate

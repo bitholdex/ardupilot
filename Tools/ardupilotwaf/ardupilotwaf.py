@@ -1,7 +1,6 @@
 # encoding: utf-8
 
-# flake8: noqa
-
+from __future__ import print_function
 from waflib import Build, ConfigSet, Configure, Context, Errors, Logs, Options, Utils, Task
 from waflib.Configure import conf
 from waflib.Scripting import run_command
@@ -10,6 +9,8 @@ import os.path, os
 from pathlib import Path
 from collections import OrderedDict
 import subprocess
+
+import ap_persistent
 
 SOURCE_EXTS = [
     '*.S',
@@ -25,6 +26,7 @@ COMMON_VEHICLE_DEPENDENT_CAN_LIBRARIES = [
 ]
 
 COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
+    'AP_Airspeed',
     'AP_AccelCal',
     'AP_ADC',
     'AP_AHRS',
@@ -40,7 +42,6 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_GSOF',
     'AP_HAL',
     'AP_HAL_Empty',
-    'AP_DDS',
     'AP_InertialSensor',
     'AP_Math',
     'AP_Mission',
@@ -52,7 +53,6 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_OpticalFlow',
     'AP_Param',
     'AP_Rally',
-    'AP_LightWareSerial',
     'AP_RangeFinder',
     'AP_Scheduler',
     'AP_SerialManager',
@@ -107,7 +107,6 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_EFI',
     'AP_Hott_Telem',
     'AP_ESC_Telem',
-    'AP_Servo_Telem',
     'AP_Stats',
     'AP_GyroFFT',
     'AP_RCTelemetry',
@@ -130,7 +129,6 @@ COMMON_VEHICLE_DEPENDENT_LIBRARIES = [
     'AP_Arming',
     'AP_RCMapper',
     'AP_MultiHeap',
-    'AP_Follow',
 ]
 
 def get_legacy_defines(sketch_name, bld):
@@ -161,13 +159,14 @@ def set_double_precision_flags(flags):
                 flags.remove(opt)
             except ValueError:
                 break
-    flags.append("-DAP_MATH_ALLOW_DOUBLE_FUNCTIONS=1")
+    flags.append("-DALLOW_DOUBLE_MATH_FUNCTIONS")
 
     return flags
 
 IGNORED_AP_LIBRARIES = [
     'doc',
     'AP_Scripting', # this gets explicitly included when it is needed and should otherwise never be globbed in
+    'AP_DDS',
 ]
 
 
@@ -499,22 +498,12 @@ def ap_find_tests(bld, use=[], DOUBLE_PRECISION_SOURCES=[]):
 _versions = []
 
 @conf
-def ap_version_append_str(ctx, k, v, consistent_v=None):
-    if ctx.env.CONSISTENT_BUILDS and consistent_v is not None:
-        v = consistent_v # override with consistent value
-    else:
-        v = os.environ.get(k, v) # use v unless defined in environment
-
-    ctx.env['AP_VERSION_ITEMS'] += [(k, f'"{v}"')]
+def ap_version_append_str(ctx, k, v):
+    ctx.env['AP_VERSION_ITEMS'] += [(k, '"{}"'.format(os.environ.get(k, v)))]
 
 @conf
-def ap_version_append_int(ctx, k, v, consistent_v=None):
-    if ctx.env.CONSISTENT_BUILDS and consistent_v is not None:
-        v = consistent_v # override with consistent value
-    else:
-        v = os.environ.get(k, v) # use v unless defined in environment
-
-    ctx.env['AP_VERSION_ITEMS'] += [(k, f'{v}')]
+def ap_version_append_int(ctx, k, v):
+    ctx.env['AP_VERSION_ITEMS'] += [(k, '{}'.format(os.environ.get(k, v)))]
 
 @conf
 def write_version_header(ctx, tgt):
@@ -643,14 +632,13 @@ def _select_programs_from_group(bld):
         else:
             groups = ['bin']
 
-    possible_groups = list(_grouped_programs.keys())
-    possible_groups.remove('bin')       # Remove `bin` so as not to duplicate all items in bin
     if 'all' in groups:
-        groups = possible_groups
+        groups = list(_grouped_programs.keys())
+        groups.remove('bin')       # Remove `bin` so as not to duplicate all items in bin
 
     for group in groups:
         if group not in _grouped_programs:
-            bld.fatal(f'Group {group} not found, possible groups: {possible_groups}')
+            bld.fatal('Group %s not found' % group)
 
         target_names = _grouped_programs[group].keys()
 
@@ -690,7 +678,7 @@ arducopter and upload it to my board".
         action='store',
         dest='upload_port',
         default=None,
-        help='''Specify the port to be used with the --upload option. For example a port of /dev/ttyS10 indicates that serial port 10 should be used.
+        help='''Specify the port to be used with the --upload option. For example a port of /dev/ttyS10 indicates that serial port 10 shuld be used.
 ''')
 
     g.add_option('--upload-blueos',
@@ -716,6 +704,16 @@ arducopter and upload it to my board".
         help='Output all test programs.')
 
     g = opt.ap_groups['clean']
+
+    g.add_option('--clean-all-sigs',
+        action='store_true',
+        help='''Clean signatures for all tasks. By default, tasks that scan for
+implicit dependencies (like the compilation tasks) keep the dependency
+information across clean commands, so that that information is changed
+only when really necessary. Also, some tasks that don't really produce
+files persist their signature. This option avoids that behavior when
+cleaning the build.
+''')
 
     g.add_option('--asan',
         action='store_true',

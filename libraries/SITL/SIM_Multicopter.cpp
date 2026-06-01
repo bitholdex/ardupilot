@@ -26,17 +26,13 @@ using namespace SITL;
 MultiCopter::MultiCopter(const char *frame_str) :
     Aircraft(frame_str)
 {
-    frame = Frame::create_frame(frame_str);
+    frame = Frame::find_frame(frame_str);
     if (frame == nullptr) {
-        printf("Frame '%s' not found or insufficient memory", frame_str);
+        printf("Frame '%s' not found", frame_str);
         exit(1);
     }
 
-    frame->init(frame_str);
-    battery.setup(frame->get_model_batt_capacity_ah(),
-                  frame->get_model_batt_resistance_ohm(),
-                  frame->get_model_batt_max_voltage(),
-                  ambient_outside_temperature_degC());
+    frame->init(frame_str, &battery);
 
     mass = frame->get_mass();
     frame_height = 0.1;
@@ -53,10 +49,12 @@ void MultiCopter::calculate_forces(const struct sitl_input &input, Vector3f &rot
     add_shove_forces(rot_accel, body_accel);
     add_twist_forces(rot_accel);
 
-    // add forces from slung payload or tether payload
-    add_external_forces(body_accel);
+#if AP_SIM_SLUNGPAYLOAD_ENABLED
+    // add forces from slung payload
+    add_slungpayload_forces(body_accel);
+#endif
 }
-
+    
 /*
   update the multicopter simulation by one time step
  */
@@ -74,12 +72,10 @@ void MultiCopter::update(const struct sitl_input &input)
         accel_body.zero();
     }
 
-    battery.maybe_reset(sitl->batt_voltage, sitl->batt_capacity_ah);
-    battery_voltage = battery.get_voltage();
-    battery_current = frame->get_current_amp();
+    // estimate voltage and current
+    frame->current_and_voltage(battery_voltage, battery_current);
 
-    const uint64_t now_us = AP_HAL::micros64();
-    battery.consume_energy(battery_current, now_us);
+    battery.set_current(battery_current);
 
     update_dynamics(rot_accel);
     update_external_payload(input);

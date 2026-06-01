@@ -10,13 +10,13 @@ bool ModeAltHold::init(bool ignore_checks)
 {
 
     // initialise the vertical position controller
-    if (!pos_control->D_is_active()) {
-        pos_control->D_init_controller();
+    if (!pos_control->is_active_z()) {
+        pos_control->init_z_controller();
     }
 
     // set vertical speed and acceleration limits
-    pos_control->D_set_max_speed_accel_m(get_pilot_speed_dn_ms(), get_pilot_speed_up_ms(), get_pilot_accel_D_mss());
-    pos_control->D_set_correction_speed_accel_m(get_pilot_speed_dn_ms(), get_pilot_speed_up_ms(), get_pilot_accel_D_mss());
+    pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
+    pos_control->set_correction_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
 
     return true;
 }
@@ -26,23 +26,24 @@ bool ModeAltHold::init(bool ignore_checks)
 void ModeAltHold::run()
 {
     // set vertical speed and acceleration limits
-    pos_control->D_set_max_speed_accel_m(get_pilot_speed_dn_ms(), get_pilot_speed_up_ms(), get_pilot_accel_D_mss());
+    pos_control->set_max_speed_accel_z(-get_pilot_speed_dn(), g.pilot_speed_up, g.pilot_accel_z);
 
     // apply SIMPLE mode transform to pilot inputs
     update_simple_mode();
 
     // get pilot desired lean angles
-    float target_roll_rad, target_pitch_rad;
-    get_pilot_desired_lean_angles_rad(target_roll_rad, target_pitch_rad, attitude_control->lean_angle_max_rad(), attitude_control->get_althold_lean_angle_max_rad());
+    float target_roll, target_pitch;
+    get_pilot_desired_lean_angles(target_roll, target_pitch, copter.aparm.angle_max, attitude_control->get_althold_lean_angle_max_cd());
 
     // get pilot's desired yaw rate
-    float target_yaw_rate_rads = get_pilot_desired_yaw_rate_rads();
+    float target_yaw_rate = get_pilot_desired_yaw_rate();
 
     // get pilot desired climb rate
-    float target_climb_rate_ms = get_pilot_desired_climb_rate_ms();
+    float target_climb_rate = get_pilot_desired_climb_rate(channel_throttle->get_control_in());
+    target_climb_rate = constrain_float(target_climb_rate, -get_pilot_speed_dn(), g.pilot_speed_up);
 
     // Alt Hold State Machine Determination
-    AltHoldModeState althold_state = get_alt_hold_state_D_ms(target_climb_rate_ms);
+    AltHoldModeState althold_state = get_alt_hold_state(target_climb_rate);
 
     // Alt Hold State Machine
     switch (althold_state) {
@@ -50,7 +51,7 @@ void ModeAltHold::run()
     case AltHoldModeState::MotorStopped:
         attitude_control->reset_rate_controller_I_terms();
         attitude_control->reset_yaw_target_and_rate(false);
-        pos_control->D_relax_controller(0.0f);   // forces throttle output to decay to zero
+        pos_control->relax_z_controller(0.0f);   // forces throttle output to decay to zero
         break;
 
     case AltHoldModeState::Landed_Ground_Idle:
@@ -59,31 +60,32 @@ void ModeAltHold::run()
 
     case AltHoldModeState::Landed_Pre_Takeoff:
         attitude_control->reset_rate_controller_I_terms_smoothly();
-        pos_control->D_relax_controller(0.0f);   // forces throttle output to decay to zero
+        pos_control->relax_z_controller(0.0f);   // forces throttle output to decay to zero
         break;
 
     case AltHoldModeState::Takeoff:
         // initiate take-off
         if (!takeoff.running()) {
-            takeoff.start_m(constrain_float(g2.pilot_takeoff_alt_m, 0.0, 10.0));
+            takeoff.start(constrain_float(g.pilot_takeoff_alt,0.0f,1000.0f));
         }
 
         // get avoidance adjusted climb rate
-        target_climb_rate_ms = get_avoidance_adjusted_climbrate_ms(target_climb_rate_ms);
+        target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
 
         // set position controller targets adjusted for pilot input
-        takeoff.do_pilot_takeoff_ms(target_climb_rate_ms);
+        takeoff.do_pilot_takeoff(target_climb_rate);
         break;
 
     case AltHoldModeState::Flying:
+        motors->set_desired_spool_state(AP_Motors::DesiredSpoolState::THROTTLE_UNLIMITED);
 
-#if AP_AVOIDANCE_ALTHOLD_ENABLED
+#if AP_AVOIDANCE_ENABLED
         // apply avoidance
-        copter.avoid.adjust_roll_pitch_rad(target_roll_rad, target_pitch_rad, attitude_control->lean_angle_max_rad());
+        copter.avoid.adjust_roll_pitch(target_roll, target_pitch, copter.aparm.angle_max);
 #endif
 
         // get avoidance adjusted climb rate
-        target_climb_rate_ms = get_avoidance_adjusted_climbrate_ms(target_climb_rate_ms);
+        target_climb_rate = get_avoidance_adjusted_climbrate(target_climb_rate);
 
 #if AP_RANGEFINDER_ENABLED
         // update the vertical offset based on the surface measurement
@@ -91,13 +93,13 @@ void ModeAltHold::run()
 #endif
 
         // Send the commanded climb rate to the position controller
-        pos_control->D_set_pos_target_from_climb_rate_ms(target_climb_rate_ms);
+        pos_control->set_pos_target_z_from_climb_rate_cm(target_climb_rate);
         break;
     }
 
     // call attitude controller
-    attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw_rad(target_roll_rad, target_pitch_rad, target_yaw_rate_rads);
+    attitude_control->input_euler_angle_roll_pitch_euler_rate_yaw(target_roll, target_pitch, target_yaw_rate);
 
     // run the vertical position controller and set output throttle
-    pos_control->D_update_controller();
+    pos_control->update_z_controller();
 }

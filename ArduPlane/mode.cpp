@@ -1,15 +1,14 @@
 #include "Plane.h"
 
 Mode::Mode() :
-    unused_integer{17},
+    ahrs(plane.ahrs)
 #if HAL_QUADPLANE_ENABLED
+    , quadplane(plane.quadplane),
     pos_control(plane.quadplane.pos_control),
     attitude_control(plane.quadplane.attitude_control),
     loiter_nav(plane.quadplane.loiter_nav),
-    quadplane(plane.quadplane),
-    poscontrol(plane.quadplane.poscontrol),
+    poscontrol(plane.quadplane.poscontrol)
 #endif
-    ahrs(plane.ahrs)
 {
 }
 
@@ -148,15 +147,11 @@ bool Mode::enter()
 
         // Make sure the flight stage is correct for the new mode
         plane.update_flight_stage();
-        
-        // reset landing state
-        plane.landing.reset();
-
 
 #if HAL_QUADPLANE_ENABLED
         if (quadplane.enabled()) {
             float aspeed;
-            bool have_airspeed = quadplane.ahrs.airspeed_EAS(aspeed);
+            bool have_airspeed = quadplane.ahrs.airspeed_estimate(aspeed);
             quadplane.assisted_flight = quadplane.assist.should_assist(aspeed, have_airspeed);
         }
 
@@ -248,7 +243,7 @@ bool Mode::_pre_arm_checks(size_t buflen, char *buffer) const
 {
 #if HAL_QUADPLANE_ENABLED
     if (plane.quadplane.enabled() && !is_vtol_mode() &&
-            plane.quadplane.option_is_set(QuadPlane::Option::ONLY_ARM_IN_QMODE_OR_AUTO)) {
+            plane.quadplane.option_is_set(QuadPlane::OPTION::ONLY_ARM_IN_QMODE_OR_AUTO)) {
         hal.util->snprintf(buffer, buflen, "not Q mode");
         return false;
     }
@@ -260,15 +255,8 @@ void Mode::run()
 {
     // Direct stick mixing functionality has been removed, so as not to remove all stick mixing from the user completely
     // the old direct option is now used to enable fbw mixing, this is easier than doing a param conversion.
-    switch ((StickMixing)plane.g.stick_mixing) {
-        case StickMixing::FBW:
-        case StickMixing::FBW_NO_PITCH:
-        case StickMixing::DIRECT_REMOVED:
-            plane.stabilize_stick_mixing_fbw();
-            break;
-        case StickMixing::NONE:
-        case StickMixing::VTOL_YAW:
-            break;
+    if ((plane.g.stick_mixing == StickMixing::FBW) || (plane.g.stick_mixing == StickMixing::DIRECT_REMOVED)) {
+        plane.stabilize_stick_mixing_fbw();
     }
     plane.stabilize_roll();
     plane.stabilize_pitch();
@@ -381,34 +369,3 @@ bool Mode::use_battery_compensation() const
 
     return true;
 }
-
-#if AP_PLANE_SYSTEMID_ENABLED
-// Return true if fixed wing system ID should be allowed
-bool Mode::allow_fw_systemid() const {
-
-    if (!supports_fw_systemid()) {
-        // Mode does not support fw system ID
-        return false;
-    }
-
-    if (is_taking_off() || is_landing()) {
-        // Taking off or landing
-        return false;
-    }
-
-#if HAL_QUADPLANE_ENABLED
-    if (quadplane.available()) {
-        if (quadplane.in_assisted_flight()) {
-            // VTOL motors assisting
-            return false;
-        }
-        if (!quadplane.transition->complete()) {
-            // Still in transition
-            return false;
-        }
-    }
-#endif // HAL_QUADPLANE_ENABLED
-
-    return true;
-}
-#endif // AP_PLANE_SYSTEMID_ENABLED

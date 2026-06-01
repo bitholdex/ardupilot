@@ -263,7 +263,7 @@ local terrain_altitude = terrain:height_above_terrain(true)
 local terrain_max_exceeded = false
 local groundspeed_vector = ahrs:groundspeed_vector()
 local groundspeed_current = groundspeed_vector:length()
-local airspeed_current = ahrs:airspeed_EAS()
+local airspeed_current = ahrs:airspeed_estimate()
 local airspeed_desired = airspeed_current
 
 local now_ms = millis()
@@ -294,13 +294,15 @@ local location_tracker  -- forward declaration. See below for definition and ins
 -- deal with deprecations in 4.7
 -------------------------------------------------
 local version47orhigher = true
-Get_Yaw_Function = ahrs.get_yaw_rad
+---@diagnostic disable-next-line: undefined-field
+Get_Yaw_Function = ahrs.get_yaw_rad			-- luacheck: ignore
 if Get_Yaw_Function == nil then
     ---@diagnostic disable-next-line: deprecated
     Get_Yaw_Function = ahrs.get_yaw
     version47orhigher = false
 end
-Distance_Orient_Function = rangefinder.distance_orient
+---@diagnostic disable-next-line: undefined-field
+Distance_Orient_Function = rangefinder.distance_orient	-- luacheck: ignore
 if Distance_Orient_Function == nil then
     ---@diagnostic disable-next-line:deprecated
     Distance_Orient_Function = rangefinder.distance_cm_orient
@@ -315,7 +317,8 @@ function Rangefinder_Distance_Orient_m(orientation)
 end
 
 -- Roll and Pitch functions change in 4.7, making it clearer that they return radians
-Get_Roll_Function = ahrs.get_roll_rad
+---@diagnostic disable-next-line: undefined-field
+Get_Roll_Function = ahrs.get_roll_rad			-- luacheck: ignore
 if Get_Roll_Function == nil then
     ---@diagnostic disable-next-line:deprecated
     Get_Roll_Function = ahrs.get_roll
@@ -324,7 +327,8 @@ function Get_Roll_Deg()
     return math.deg(Get_Roll_Function(ahrs))
 end
 
-Get_Pitch_Function = ahrs.get_pitch_rad
+---@diagnostic disable-next-line: undefined-field
+Get_Pitch_Function = ahrs.get_pitch_rad			-- luacheck: ignore
 if Get_Pitch_Function == nil then
     ---@diagnostic disable-next-line:deprecated
     Get_Pitch_Function = ahrs.get_pitch
@@ -960,11 +964,6 @@ while (distance > 0) {
 -------------------------------------------------------------------------------
 -- Lookahead functions - replaces the c++ functions in AP_Terrain
 -------------------------------------------------------------------------------
----@param start_location Location_ud
----@param search_bearing number
----@param search_distance number
----@param search_ratio number
----@return Location_ud|nil
 function Terrain_Lookahead(start_location, search_bearing, search_distance, search_ratio)
     local highest_location = nil
     local climb = 0.0
@@ -1223,7 +1222,7 @@ function Update()
     current_heading_deg = math.deg(Get_Yaw_Function(ahrs) or 0)
     groundspeed_vector = ahrs:groundspeed_vector()
     groundspeed_current = groundspeed_vector:length()
-    airspeed_current = ahrs:airspeed_EAS()
+    airspeed_current = ahrs:airspeed_estimate()
 
     -- save the previous target location only if in auto mode, if restoring it in AUTO mode
     -- don't update it if already pitching or quading because the altitude change will mess up the history

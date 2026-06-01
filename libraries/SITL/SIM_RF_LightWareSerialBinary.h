@@ -36,9 +36,7 @@ namespace SITL {
 class RF_LightWareSerialBinary : public SerialRangeFinder {
 public:
 
-    static SerialRangeFinder *create() { return NEW_NOTHROW RF_LightWareSerialBinary(); }
-
-    uint32_t packet_for_alt(float alt_m, uint8_t *buffer, uint8_t buflen) override;
+    uint32_t packet_for_alt(uint16_t alt_cm, uint8_t *buffer, uint8_t buflen) override;
 
 };
 

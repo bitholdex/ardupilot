@@ -21,7 +21,6 @@
 #include "HarmonicNotchFilter.h"
 #include <GCS_MAVLink/GCS.h>
 #include <AP_Logger/AP_Logger.h>
-#include <AP_Vehicle/AP_Vehicle_Type.h>
 
 /*
   optional logging for SITL only of all notch frequencies
@@ -46,13 +45,6 @@
   point at which the harmonic notch goes to zero attenuation
  */
 #define NOTCHFILTER_ATTENUATION_CUTOFF 0.25
-
-#if APM_BUILD_TYPE(APM_BUILD_Heli)
-    // We cannot use throttle based notch on helis
-    #define NOTCHFILTER_DEFAULT_MODE float(HarmonicNotchDynamicMode::Fixed) // fixed
-#else
-    #define NOTCHFILTER_DEFAULT_MODE float(HarmonicNotchDynamicMode::UpdateThrottle) // throttle based
-#endif
 
 
 // table of user settable parameters
@@ -122,22 +114,22 @@ const AP_Param::GroupInfo HarmonicNotchFilterParams::var_info[] = {
 
     // @Param: MODE
     // @DisplayName: Harmonic Notch Filter dynamic frequency tracking mode
-    // @Description: Harmonic Notch Filter dynamic frequency tracking mode. Dynamic updates can be throttle, RPM sensor, ESC telemetry or dynamic FFT based. Throttle-based harmonic notch cannot be used on fixed wing only planes. It can for Copters, QuadPlane(while in VTOL modes), and Rovers.
+    // @Description: Harmonic Notch Filter dynamic frequency tracking mode. Dynamic updates can be throttle, RPM sensor, ESC telemetry or dynamic FFT based. Throttle-based harmonic notch cannot be used on fixed wing only planes. It can for Copters, QuaadPlane(while in VTOL modes), and Rovers.
     // @Range: 0 5
     // @Values: 0:Fixed,1:Throttle,2:RPM Sensor,3:ESC Telemetry,4:Dynamic FFT,5:Second RPM Sensor
     // @User: Advanced
-    AP_GROUPINFO("MODE", 7, HarmonicNotchFilterParams, _tracking_mode, NOTCHFILTER_DEFAULT_MODE),
+    AP_GROUPINFO("MODE", 7, HarmonicNotchFilterParams, _tracking_mode, int8_t(HarmonicNotchDynamicMode::UpdateThrottle)),
 
     // @Param: OPTS
     // @DisplayName: Harmonic Notch Filter options
     // @Description: Harmonic Notch Filter options. Triple and double-notches can provide deeper attenuation across a wider bandwidth with reduced latency than single notches and are suitable for larger aircraft. Multi-Source attaches a harmonic notch to each detected noise frequency instead of simply being multiples of the base frequency, in the case of FFT it will attach notches to each of three detected noise peaks, in the case of ESC it will attach notches to each of four motor RPM values. Loop rate update changes the notch center frequency at the scheduler loop rate rather than at the default of 200Hz. If both double and triple notches are specified only double notches will take effect.
-    // @Bitmask: 0:Double notch,1:Multi-Source,2:Update at loop rate,3:EnableOnAllIMUs,4:Triple notch, 5:Use min freq on RPM source failure, 6:Quintuple notch
+    // @Bitmask: 0:Double notch,1:Multi-Source,2:Update at loop rate,3:EnableOnAllIMUs,4:Triple notch, 5:Use min freq on RPM source failure
     // @User: Advanced
     // @RebootRequired: True
     AP_GROUPINFO("OPTS", 8, HarmonicNotchFilterParams, _options, 0),
 
     // @Param: FM_RAT
-    // @DisplayName: Throttle notch min frequency ratio
+    // @DisplayName: Throttle notch min freqency ratio
     // @Description: The minimum ratio below the configured frequency to take throttle based notch filters when flying at a throttle level below the reference throttle. Note that lower frequency notch filters will have more phase lag. If you want throttle based notch filtering to be effective at a throttle up to 30% below the configured notch frequency then set this parameter to 0.7. The default of 1.0 means the notch will not go below the frequency in the FREQ parameter.
     // @Range: 0.1 1.0
     // @User: Advanced
@@ -384,10 +376,6 @@ void HarmonicNotchFilter<T>::update(uint8_t num_centers, const float center_freq
             set_center_frequency(_num_enabled_filters++, notch_center, 1.0 - _notch_spread, harmonic_mul);
             set_center_frequency(_num_enabled_filters++, notch_center, 1.0 + _notch_spread, harmonic_mul);
         }
-        if (_composite_notches > 3) {
-            set_center_frequency(_num_enabled_filters++, notch_center, 1.0 - 2 * _notch_spread, harmonic_mul);
-            set_center_frequency(_num_enabled_filters++, notch_center, 1.0 + 2 * _notch_spread, harmonic_mul);
-        }
     }
 }
 
@@ -546,23 +534,6 @@ void HarmonicNotchFilterParams::save_params()
     _reference.save();
     _freq_min_ratio.save();
 }
-
-
-// return the number of composite notches given the options
-uint8_t HarmonicNotchFilterParams::num_composite_notches(void) const
-{
-    if (hasOption(Options::DoubleNotch)) {
-        return 2;
-    }
-    if (hasOption(Options::TripleNotch)) {
-        return 3;
-    }
-    if (hasOption(Options::QuintupleNotch)) {
-        return 5;
-    }
-    return 1;
-}
-
 
 /* 
   instantiate template classes

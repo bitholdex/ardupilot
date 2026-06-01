@@ -18,7 +18,7 @@
 
 #include <AP_HAL/AP_HAL.h>
 #include <AP_Networking/AP_Networking_Config.h>
-#if AP_NETWORKING_SOCKETS_ENABLED || defined(AP_SOCKET_NATIVE_ENABLED)
+#if AP_NETWORKING_SOCKETS_ENABLED
 
 #ifndef SOCKET_CLASS_NAME
 #define SOCKET_CLASS_NAME SocketAPM
@@ -159,9 +159,6 @@ bool SOCKET_CLASS_NAME::connect(const char *address, uint16_t port)
 
     ret = CALL_PREFIX(connect)(fd, (struct sockaddr *)&sockaddr, sizeof(sockaddr));
     if (ret != 0) {
-        if (errno == EINPROGRESS) {
-            pending_connect = true;
-        }
         return false;
     }
     connected = true;
@@ -170,9 +167,7 @@ bool SOCKET_CLASS_NAME::connect(const char *address, uint16_t port)
         // for bi-directional UDP broadcast we need 2 sockets
         struct sockaddr_in send_addr;
         socklen_t send_len = sizeof(send_addr);
-        if (CALL_PREFIX(getsockname)(fd, (struct sockaddr *)&send_addr, &send_len) == -1) {
-            return false;
-        }
+        ret = CALL_PREFIX(getsockname)(fd, (struct sockaddr *)&send_addr, &send_len);
         fd_in = CALL_PREFIX(socket)(AF_INET, SOCK_DGRAM, 0);
         if (fd_in == -1) {
             goto fail_multi;
@@ -482,17 +477,6 @@ bool SOCKET_CLASS_NAME::pollout(uint32_t timeout_ms)
     if (CALL_PREFIX(select)(fd+1, nullptr, &fds, nullptr, &tv) != 1) {
         return false;
     }
-
-    if (pending_connect) {
-        int sock_error = 0;
-        socklen_t len = sizeof(sock_error);
-        if (CALL_PREFIX(getsockopt)(fd, SOL_SOCKET, SO_ERROR, (void*)&sock_error, &len) == 0 &&
-            sock_error == 0) {
-            connected = true;
-        }
-        pending_connect = false;
-    }
-
     return true;
 }
 

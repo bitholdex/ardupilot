@@ -63,7 +63,7 @@ bool AP_Landing::type_slope_verify_land(const Location &prev_WP_loc, Location &n
     // determine stage
     if (type_slope_stage == SlopeStage::NORMAL) {
         const bool heading_lined_up = abs(nav_controller->bearing_error_cd()) < 1000 && !nav_controller->data_is_stale();
-        const bool on_flight_line = fabsf(nav_controller->crosstrack_error_m()) < 5.0f && !nav_controller->data_is_stale();
+        const bool on_flight_line = fabsf(nav_controller->crosstrack_error()) < 5.0f && !nav_controller->data_is_stale();
         const bool below_prev_WP = current_loc.alt < loc_alt_AMSL_cm(prev_WP_loc);
         if ((mission.get_prev_nav_cmd_id() == MAV_CMD_NAV_LOITER_TO_ALT) ||
             (wp_proportion >= 0 && heading_lined_up && on_flight_line) ||
@@ -168,7 +168,7 @@ bool AP_Landing::type_slope_verify_land(const Location &prev_WP_loc, Location &n
 
     if (mission.continue_after_land() &&
         type_slope_stage == SlopeStage::FINAL &&
-        gps.status() >= AP_GPS_FixType::FIX_3D &&
+        gps.status() >= AP_GPS::GPS_OK_FIX_3D &&
         gps.ground_speed() < 1) {
         /*
           user has requested to continue with mission after a
@@ -329,7 +329,7 @@ void AP_Landing::type_slope_setup_landing_glide_slope(const Location &prev_WP_lo
 
     // calculate point along that slope 500m ahead
     loc.offset_bearing(land_bearing_cd * 0.01f, land_projection);
-    loc.offset_up_m(-slope * land_projection);
+    loc.alt -= slope * land_projection * 100;
 
     // setup the offset_cm for set_target_altitude_proportion()
     target_altitude_offset_cm = loc.alt - loc_alt_AMSL_cm(prev_WP_loc);
@@ -395,12 +395,6 @@ bool AP_Landing::type_slope_is_flaring(void) const
     return (type_slope_stage == SlopeStage::FINAL);
 }
 
-bool AP_Landing::type_slope_is_on_final(void) const
-{
-    return (type_slope_stage == SlopeStage::PREFLARE ||
-            type_slope_stage == SlopeStage::FINAL);
-}
-
 bool AP_Landing::type_slope_is_on_approach(void) const
 {
     return (type_slope_stage == SlopeStage::APPROACH ||
@@ -409,7 +403,8 @@ bool AP_Landing::type_slope_is_on_approach(void) const
 
 bool AP_Landing::type_slope_is_expecting_impact(void) const
 {
-    return type_slope_is_on_final();
+    return (type_slope_stage == SlopeStage::PREFLARE ||
+            type_slope_stage == SlopeStage::FINAL);
 }
 
 bool AP_Landing::type_slope_is_complete(void) const

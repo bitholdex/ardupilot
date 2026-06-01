@@ -18,7 +18,6 @@
 #include "AP_HAL_QURT.h"
 #include "Semaphores.h"
 #include <AP_HAL/utility/RingBuffer.h>
-#include <AP_SerialManager/AP_SerialManager.h>
 #include "ap_host/src/protocol.h"
 
 class QURT::UARTDriver : public AP_HAL::UARTDriver
@@ -84,8 +83,6 @@ public:
 
     bool _write_pending_bytes(void) override;
 
-    void check_rx_seq(uint32_t seq);
-
     uint32_t bw_in_bytes_per_second() const override
     {
         return 250000 * 3;
@@ -98,8 +95,7 @@ public:
 private:
     static void _mavlink_data_cb(const struct qurt_rpc_msg *msg, void *p);
     uint8_t inst;
-    uint32_t tx_seq;
-    uint32_t rx_seq;
+    uint32_t seq;
 };
 
 /*
@@ -135,60 +131,4 @@ private:
     int fd = -1;
     uint32_t baudrate;
     uint64_t receive_timestamp_us;
-};
-
-/*
-  RegisteredPort subclass for tunneled UARTs on the apps processor.
-  Each instance owns a fixed port_id (embedded in the encapsulating
-  qurt_rpc_msg) and a hardcoded device_id (mapped to /dev/ttyHS<id>
-  on the apps processor). Multiple instances can be registered so
-  the user can assign any SERIALn_PROTOCOL to each.
-*/
-class QURT::UARTDriver_RemoteRegistered : public AP_SerialManager::RegisteredPort
-{
-public:
-    UARTDriver_RemoteRegistered(uint8_t _port_id, uint32_t _device_id)
-        : port_id(_port_id), device_id(_device_id) {}
-
-    // called once at boot to register with SerialManager
-    void init(uint8_t serial_idx);
-
-    // called from the HAL timer thread to drain the tx buffer
-    void _timer_tick(void) override;
-
-    // receive callback invoked when a UART_DATA packet for this port
-    // arrives from the apps processor
-    static void uart_data_cb(const struct qurt_rpc_msg *msg, void *p);
-
-    bool is_initialized() override { return initialised; }
-    bool tx_pending() override;
-    uint32_t txspace() override;
-    uint32_t get_baud_rate() const override;
-
-protected:
-    void     _begin(uint32_t b, uint16_t rxS, uint16_t txS) override;
-    size_t   _write(const uint8_t *buffer, size_t size) override;
-    ssize_t  _read(uint8_t *buffer, uint16_t count) override;
-    uint32_t _available() override;
-    void     _end() override {}
-    void     _flush() override {}
-    bool     _discard_input() override;
-
-private:
-    bool send_config(uint32_t b);
-    bool push_pending_bytes();
-
-    const uint8_t  port_id;
-    const uint32_t device_id;
-
-    ByteBuffer *readbuffer = nullptr;
-    ByteBuffer *writebuffer = nullptr;
-    QURT::Semaphore read_mutex;
-    QURT::Semaphore write_mutex;
-
-    uint32_t baudrate = 0;
-    uint32_t tx_seq = 0;
-    uint32_t rx_seq = 0;
-    bool remote_configured = false;
-    bool initialised = false;
 };

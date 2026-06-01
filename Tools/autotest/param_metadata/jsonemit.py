@@ -1,5 +1,3 @@
-# flake8: noqa
-
 import json
 import copy
 from emit import Emit
@@ -32,14 +30,10 @@ class JSONEmit(Emit):
         # Copy content to avoid any modification
         g = copy.deepcopy(g)
 
-        # Make new dict if one does not already exist
-        if g.name not in self.content:
-            self.content[g.name] = {}
+        self.content[g.name] = {}
 
         # Check all params available
         for param in g.params:
-            if not self.should_emit_param(param):
-                continue
             param_json = {}
 
             # Get display name

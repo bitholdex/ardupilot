@@ -16,11 +16,9 @@
 	Simulator Connector for AirSim
 */
 
-#include "SIM_config.h"
-
-#if AP_SIM_AIRSIM_ENABLED
-
 #include "SIM_AirSim.h"
+
+#if HAL_SIM_AIRSIM_ENABLED
 
 #include <stdio.h>
 #include <arpa/inet.h>
@@ -166,7 +164,7 @@ bool AirSim::parse_sensors(const char *json)
                 break;
 
             case DATA_FLOAT:
-                *((float *)key.ptr) = strtof(p, nullptr);
+                *((float *)key.ptr) = atof(p);
                 break;
 
             case DATA_DOUBLE:
@@ -246,7 +244,7 @@ bool AirSim::parse_sensors(const char *json)
                         v->data = d;
                         v->length = n+1;
                     }
-                    v->data[n] = strtof(p, nullptr);
+                    v->data[n] = atof(p);
                     n++;
                     p = strchr(p,',');
                     if (!p) {
@@ -309,12 +307,9 @@ void AirSim::recv_fdm(const sitl_input& input)
     gyro = state.imu.angular_velocity;
     velocity_ef = state.velocity.world_linear_velocity;
 
-    location = {
-        int32_t(state.gps.lat * 1.0e7),
-        int32_t(state.gps.lon * 1.0e7),
-        int32_t(state.gps.alt * 100.0f),
-        Location::AltFrame::ABSOLUTE
-    };
+    location.lat = state.gps.lat * 1.0e7;
+    location.lng = state.gps.lon * 1.0e7;
+    location.alt = state.gps.alt * 100.0f;
 
     position = origin.get_distance_NED_double(location);
 
@@ -433,4 +428,4 @@ void AirSim::report_FPS(void)
     }
 }
 
-#endif  // AP_SIM_AIRSIM_ENABLED
+#endif  // HAL_SIM_AIRSIM_ENABLED

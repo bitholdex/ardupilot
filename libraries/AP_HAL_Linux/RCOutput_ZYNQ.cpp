@@ -3,8 +3,6 @@
 
 #include "RCOutput_ZYNQ.h"
 
-#if AP_RCOUTPUT_ZYNQ_ENABLED
-
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/spi/spidev.h>
@@ -33,7 +31,7 @@ using namespace Linux;
 
 static void catch_sigbus(int sig)
 {
-    AP_HAL::panic("RCOutput.cpp:SIGBUS error generated");
+    AP_HAL::panic("RCOutput.cpp:SIGBUS error generated\n");
 }
 void RCOutput_ZYNQ::init()
 {
@@ -132,5 +130,3 @@ void RCOutput_ZYNQ::push(void)
     }
     pending_mask = 0;
 }
-
-#endif  // AP_RCOUTPUT_ZYNQ_ENABLED

@@ -138,23 +138,6 @@ extern "C" {
 
 extern "C" int qurt_ardupilot_main(int argc, char* const argv[]);
 
-typedef void (*remote_uart_data_callback_t)(const struct qurt_rpc_msg *msg, void* p);
-
-static remote_uart_data_callback_t remote_uart_cb[MAX_REMOTE_UART_INSTANCES];
-static void *remote_uart_cb_ptr[MAX_REMOTE_UART_INSTANCES];
-
-void register_remote_uart_data_callback(uint8_t port_id,
-                                        remote_uart_data_callback_t func,
-                                        void *p)
-{
-    if (port_id >= MAX_REMOTE_UART_INSTANCES) {
-        HAP_PRINTF("Error: Invalid remote uart port_id %u", port_id);
-        return;
-    }
-    remote_uart_cb[port_id] = func;
-    remote_uart_cb_ptr[port_id] = p;
-}
-
 int slpi_link_client_init(void)
 {
     HAP_PRINTF("About to call qurt_ardupilot_main %p", &qurt_ardupilot_main);
@@ -168,6 +151,7 @@ typedef void (*mavlink_data_callback_t)(const struct qurt_rpc_msg *msg, void* p)
 
 static mavlink_data_callback_t mav_cb[MAX_MAVLINK_INSTANCES];
 static void *mav_cb_ptr[MAX_MAVLINK_INSTANCES];
+static uint32_t expected_seq;
 
 void register_mavlink_data_callback(uint8_t instance, mavlink_data_callback_t func, void *p)
 {
@@ -188,6 +172,10 @@ int slpi_link_client_receive(const uint8_t *data, int data_len_in_bytes)
     if (msg->data_length + QURT_RPC_MSG_HEADER_LEN != data_len_in_bytes) {
         return 0;
     }
+    if (msg->seq != expected_seq) {
+        HAP_PRINTF("Bad sequence %u %u", msg->seq, expected_seq);
+    }
+    expected_seq = msg->seq + 1;
 
     switch (msg->msg_id) {
     case QURT_MSG_ID_MAVLINK_MSG: {
@@ -196,38 +184,12 @@ int slpi_link_client_receive(const uint8_t *data, int data_len_in_bytes)
         }
         break;
     }
-    case QURT_MSG_ID_UART_DATA: {
-        // msg->inst carries the tunneled port_id
-        if (msg->inst < MAX_REMOTE_UART_INSTANCES && remote_uart_cb[msg->inst]) {
-            remote_uart_cb[msg->inst](msg, remote_uart_cb_ptr[msg->inst]);
-        }
-        break;
-    }
-
     default:
         HAP_PRINTF("Got unknown message id %d", msg->msg_id);
         break;
     }
 
     return 0;
-}
-
-/*
-  forward a pre-formatted string to the apps proc console over RPC
- */
-void qurt_printf_to_host(const char *buf)
-{
-    struct qurt_rpc_msg msg;
-    const auto len = strnlen(buf, sizeof(msg.data));
-    if (len > sizeof(msg.data)) {
-        return;
-    }
-    msg.msg_id = QURT_MSG_ID_PRINTF;
-    msg.inst = 0;
-    msg.seq = 0;
-    msg.data_length = len;
-    memcpy(msg.data, buf, len);
-    qurt_rpc_send(msg);
 }
 
 int __wrap_printf(const char *fmt, ...)
@@ -239,7 +201,6 @@ int __wrap_printf(const char *fmt, ...)
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
     HAP_PRINTF(buf);
-    qurt_printf_to_host(buf);
 
     return 0;
 }

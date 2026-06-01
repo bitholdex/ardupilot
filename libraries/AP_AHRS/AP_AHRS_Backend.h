@@ -49,79 +49,17 @@ public:
 
     CLASS_NO_COPY(AP_AHRS_Backend);
 
-    virtual const char *shortname() const = 0;
-
     // structure to retrieve results from backends:
     struct Estimates {
-        // allow backends to set the private members:
-        friend class AP_AHRS_DCM;
-        friend class AP_AHRS_SIM;
-        friend class AP_AHRS_External;
-        friend class AP_AHRS_NavEKF2;
-        friend class AP_AHRS_NavEKF3;
-
-        // if attitude_valid is true then all of the
-        // eulers/quaternion/matrix must be valid:
-        bool attitude_valid;
         float roll_rad;
         float pitch_rad;
         float yaw_rad;
         Matrix3f dcm_matrix;
-        Quaternion quaternion;
-
-        // backends must always return the result in the vehicle body
-        // frame.  A backend using the autopilot sensors will need to
-        // rotate according to the TRIM parameters.  An ExternalAHRS
-        // won't!
-        bool get_quaternion(Quaternion &quat) const {
-            quat = quaternion;
-            return attitude_valid;
-        }
-
         Vector3f gyro_estimate;
         Vector3f gyro_drift;
         Vector3f accel_ef;
         Vector3f accel_bias;
 
-        // a ground velocity in meters/second, North/East/Down
-        Vector3f velocity_NED;
-        bool velocity_NED_valid;
-        // return a ground velocity in meters/second, North/East/Down
-        bool get_velocity_NED(Vector3f &vel) const WARN_IF_UNUSED {
-            if (!velocity_NED_valid) {
-                return false;
-            }
-            vel = velocity_NED;
-            return true;
-        };
-        // ground velocity estimate in meters/second, in North/East order
-        Vector2f velocity_NE;
-
-        // a derivative of the vertical position in m/s which is
-        // kinematically consistent with the vertical position is
-        // required by some control loops.
-        // This is different to the vertical velocity from the EKF
-        // which is not always consistent with the vertical position
-        // due to the various errors that are being corrected for.
-        float vert_pos_rate_D;
-        bool vert_pos_rate_D_valid;
-        // Get a derivative of the vertical position in m/s which is
-        // kinematically consistent with the vertical position is
-        // required by some control loops.
-        // This is different to the vertical velocity from the EKF
-        // which is not always consistent with the vertical position
-        // due to the various errors that are being corrected for.
-        bool get_vert_pos_rate_D(float &velocity) const {
-            if (!vert_pos_rate_D_valid) {
-                return false;
-            }
-            velocity = vert_pos_rate_D;
-            return true;
-        }
-
-        /*
-         * position estimates
-         */
         Location location;
         bool location_valid;
 
@@ -129,19 +67,22 @@ public:
             loc = location;
             return location_valid;
         };
-
-        bool get_hagl(float &height) const WARN_IF_UNUSED {
-            height = hagl;
-            return hagl_valid;
-        }
-
-    private:
-        bool hagl_valid;
-        float hagl;
     };
 
     // init sets up INS board orientation
     virtual void init();
+
+    // return the index of the primary core or -1 if no primary core selected
+    virtual int8_t get_primary_core_index() const { return -1; }
+
+    // get the index of the current primary accelerometer sensor
+    virtual uint8_t get_primary_accel_index(void) const {
+#if AP_INERTIALSENSOR_ENABLED
+        return AP::ins().get_first_usable_accel();
+#else
+        return 0;
+#endif
+    }
 
     // get the index of the current primary gyro sensor
     virtual uint8_t get_primary_gyro_index(void) const {
@@ -161,8 +102,17 @@ public:
     // requires_position should be true if horizontal position configuration should be checked
     virtual bool pre_arm_check(bool requires_position, char *failure_msg, uint8_t failure_msg_len) const = 0;
 
+    // check all cores providing consistent attitudes for prearm checks
+    virtual bool attitudes_consistent(char *failure_msg, const uint8_t failure_msg_len) const { return true; }
+
     // see if EKF lane switching is possible to avoid EKF failsafe
     virtual void check_lane_switch(void) {}
+
+    // check if non-compass sensor is providing yaw.  Allows compass pre-arm checks to be bypassed
+    virtual bool using_noncompass_for_yaw(void) const { return false; }
+
+    // check if external nav is providing yaw
+    virtual bool using_extnav_for_yaw(void) const { return false; }
 
     // request EKF yaw reset to try and avoid the need for an EKF lane switch or failsafe
     virtual void request_yaw_reset(void) {}
@@ -177,27 +127,35 @@ public:
     // reset the current attitude, used on new IMU calibration
     virtual void reset() = 0;
 
+    // get latest altitude estimate above ground level in meters and validity flag
+    virtual bool get_hagl(float &height) const WARN_IF_UNUSED { return false; }
+
     // return a wind estimation vector, in m/s
     virtual bool wind_estimate(Vector3f &wind) const = 0;
 
     // return an airspeed estimate if available. return true
     // if we have an estimate
-    virtual bool airspeed_EAS(float &airspeed_ret) const WARN_IF_UNUSED { return false; }
-    virtual bool airspeed_EAS(uint8_t airspeed_index, float &airspeed_ret) const { return false; }
+    virtual bool airspeed_estimate(float &airspeed_ret) const WARN_IF_UNUSED { return false; }
+    virtual bool airspeed_estimate(uint8_t airspeed_index, float &airspeed_ret) const { return false; }
 
     // return a true airspeed estimate (navigation airspeed) if
     // available. return true if we have an estimate
-    bool airspeed_TAS(float &airspeed_ret) const WARN_IF_UNUSED {
-        if (!airspeed_EAS(airspeed_ret)) {
+    bool airspeed_estimate_true(float &airspeed_ret) const WARN_IF_UNUSED {
+        if (!airspeed_estimate(airspeed_ret)) {
             return false;
         }
         airspeed_ret *= get_EAS2TAS();
         return true;
     }
 
+    // return estimate of true airspeed vector in body frame in m/s
+    // returns false if estimate is unavailable
+    virtual bool airspeed_vector_true(Vector3f &vec) const WARN_IF_UNUSED {
+        return false;
+    }
+
     // get apparent to true airspeed ratio
     static float get_EAS2TAS(void);
-    static float get_TAS2EAS(void) { return 1.0/get_EAS2TAS(); }
 
     // return true if airspeed comes from an airspeed sensor, as
     // opposed to an IMU estimate
@@ -221,6 +179,34 @@ public:
     #endif
     }
 
+    // return a ground vector estimate in meters/second, in North/East order
+    virtual Vector2f groundspeed_vector(void) = 0;
+
+    // return a ground velocity in meters/second, North/East/Down
+    // order. This will only be accurate if have_inertial_nav() is
+    // true
+    virtual bool get_velocity_NED(Vector3f &vec) const WARN_IF_UNUSED {
+        return false;
+    }
+
+    // Get a derivative of the vertical position in m/s which is kinematically consistent with the vertical position is required by some control loops.
+    // This is different to the vertical velocity from the EKF which is not always consistent with the vertical position due to the various errors that are being corrected for.
+    virtual bool get_vert_pos_rate_D(float &velocity) const = 0;
+
+    // returns the estimated magnetic field offsets in body frame
+    virtual bool get_mag_field_correction(Vector3f &ret) const WARN_IF_UNUSED {
+        return false;
+    }
+
+    virtual bool get_mag_field_NED(Vector3f &vec) const {
+        return false;
+    }
+
+    virtual bool get_mag_offsets(uint8_t mag_idx, Vector3f &magOffsets) const {
+        return false;
+    }
+
+    //
     virtual bool set_origin(const Location &loc) {
         return false;
     }
@@ -229,24 +215,38 @@ public:
     // return a position relative to origin in meters, North/East/Down
     // order. This will only be accurate if have_inertial_nav() is
     // true
-    virtual bool get_relative_position_NED_origin(Vector3p &vec) const WARN_IF_UNUSED {
+    virtual bool get_relative_position_NED_origin(Vector3f &vec) const WARN_IF_UNUSED {
         return false;
     }
 
     // return a position relative to origin in meters, North/East
     // order. Return true if estimate is valid
-    virtual bool get_relative_position_NE_origin(Vector2p &vecNE) const WARN_IF_UNUSED {
+    virtual bool get_relative_position_NE_origin(Vector2f &vecNE) const WARN_IF_UNUSED {
         return false;
     }
 
     // return a Down position relative to origin in meters
     // Return true if estimate is valid
-    virtual bool get_relative_position_D_origin(postype_t &posD) const WARN_IF_UNUSED {
+    virtual bool get_relative_position_D_origin(float &posD) const WARN_IF_UNUSED {
         return false;
+    }
+
+    // return ground speed estimate in meters/second. Used by ground vehicles.
+    float groundspeed(void) {
+        return groundspeed_vector().length();
     }
 
     // return true if we will use compass for yaw
     virtual bool use_compass(void) = 0;
+
+    // return the quaternion defining the rotation from NED to XYZ (body) axes
+    virtual bool get_quaternion(Quaternion &quat) const WARN_IF_UNUSED = 0;
+
+    // return true if the AHRS object supports inertial navigation,
+    // with very accurate position and velocity
+    virtual bool have_inertial_nav(void) const {
+        return false;
+    }
 
     // is the AHRS subsystem healthy?
     virtual bool healthy(void) const = 0;
@@ -286,7 +286,11 @@ public:
     // Resets the baro so that it reads zero at the current height
     // Resets the EKF height to zero
     // Adjusts the EKf origin height so that the EKF height + origin height is the same as before
-    virtual void resetHeightDatum(void) { }
+    // Returns true if the height datum reset has been performed
+    // If using a range finder for height no reset is performed and it returns false
+    virtual bool resetHeightDatum(void) WARN_IF_UNUSED {
+        return false;
+    }
 
     // return the innovations for the specified instance
     // An out of range instance (eg -1) returns data for the primary instance
@@ -306,7 +310,22 @@ public:
         return false;
     }
 
+    // get a source's velocity innovations.  source should be from 0 to 7 (see AP_NavEKF_Source::SourceXY)
+    // returns true on success and results are placed in innovations and variances arguments
+    virtual bool get_vel_innovations_and_variances_for_source(uint8_t source, Vector3f &innovations, Vector3f &variances) const WARN_IF_UNUSED {
+        return false;
+    }
+
     virtual void send_ekf_status_report(class GCS_MAVLINK &link) const = 0;
+
+    // get_hgt_ctrl_limit - get maximum height to be observed by the
+    // control loops in meters and a validity flag.  It will return
+    // false when no limiting is required
+    virtual bool get_hgt_ctrl_limit(float &limit) const WARN_IF_UNUSED { return false; };
+
+    // Set to true if the terrain underneath is stable enough to be used as a height reference
+    // this is not related to terrain following
+    virtual void set_terrain_hgt_stable(bool stable) {}
 
     virtual void get_control_limits(float &ekfGndSpdLimit, float &controlScaleXY) const = 0;
 };

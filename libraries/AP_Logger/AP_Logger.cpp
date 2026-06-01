@@ -25,8 +25,7 @@ extern const AP_HAL::HAL& hal;
 
 #ifndef HAL_LOGGING_FILE_BUFSIZE
 #if HAL_MEM_CLASS >= HAL_MEM_CLASS_1000
-// adjust buffer size for extra space allocated on more capable boards
-#define HAL_LOGGING_FILE_BUFSIZE  (200-((AP_FATFS_MAX_IO_SIZE-AP_FATFS_MIN_IO_SIZE)/1024))
+#define HAL_LOGGING_FILE_BUFSIZE  200
 #elif HAL_MEM_CLASS >= HAL_MEM_CLASS_500
 #define HAL_LOGGING_FILE_BUFSIZE  80
 #elif HAL_MEM_CLASS >= HAL_MEM_CLASS_300
@@ -55,18 +54,6 @@ extern const AP_HAL::HAL& hal;
 // by default log for 15 seconds after disarming
 #ifndef HAL_LOGGER_ARM_PERSIST
 #define HAL_LOGGER_ARM_PERSIST 15
-#endif
-
-#ifndef HAL_LOGGER_MIN_MB_FREE
-#if AP_FILESYSTEM_LITTLEFS_ENABLED
-#if AP_FILESYSTEM_LITTLEFS_FLASH_TYPE == AP_FILESYSTEM_FLASH_W25NXX
-#define HAL_LOGGER_MIN_MB_FREE 10
-#else
-#define HAL_LOGGER_MIN_MB_FREE 2
-#endif
-#else
-#define HAL_LOGGER_MIN_MB_FREE 500
-#endif
 #endif
 
 #ifndef HAL_LOGGING_BACKENDS_DEFAULT
@@ -102,9 +89,9 @@ const AP_Param::GroupInfo AP_Logger::var_info[] = {
     AP_GROUPINFO("_BACKEND_TYPE",  0, AP_Logger, _params.backend_types,       uint8_t(HAL_LOGGING_BACKENDS_DEFAULT)),
 
     // @Param: _FILE_BUFSIZE
-    // @DisplayName: Logging File and Block Backend buffer size max (in kibibytes)
+    // @DisplayName: Logging File and Block Backend buffer size max (in kilobytes)
     // @Description: The File and Block backends use a buffer to store data before writing to the block device.  Raising this value may reduce "gaps" in your SD card logging but increases memory usage.  This buffer size may be reduced to free up available memory
-    // @Units: KiB
+    // @Units: kB
     // @Range: 4 200
     // @User: Standard
     AP_GROUPINFO("_FILE_BUFSIZE",  1, AP_Logger, _params.file_bufsize,       HAL_LOGGING_FILE_BUFSIZE),
@@ -150,9 +137,9 @@ const AP_Param::GroupInfo AP_Logger::var_info[] = {
     // @DisplayName: Old logs on the SD card will be deleted to maintain this amount of free space
     // @Description: Set this such that the free space is larger than your largest typical flight log
     // @Units: MB
-    // @Range: 2 1000
+    // @Range: 10 1000
     // @User: Standard
-    AP_GROUPINFO("_FILE_MB_FREE",  7, AP_Logger, _params.min_MB_free, HAL_LOGGER_MIN_MB_FREE),
+    AP_GROUPINFO("_FILE_MB_FREE",  7, AP_Logger, _params.min_MB_free, 500),
 
     // @Param: _FILE_RATEMAX
     // @DisplayName: Maximum logging rate for file backend
@@ -171,7 +158,7 @@ const AP_Param::GroupInfo AP_Logger::var_info[] = {
     // @Range: 0 1000
     // @Increment: 0.1
     // @User: Standard
-    AP_GROUPINFO("_MAV_RATEMAX",  9, AP_Logger, _params.mav_ratemax, 10),
+    AP_GROUPINFO("_MAV_RATEMAX",  9, AP_Logger, _params.mav_ratemax, 0),
 #endif
 
 #if HAL_LOGGING_BLOCK_ENABLED
@@ -253,18 +240,14 @@ void AP_Logger::init(const AP_Int32 &log_bitmask, const struct LogStructure *str
 #endif
 };
 
-    uint8_t remaining_types = _params.backend_types;
     for (const auto &backend_config : backend_configs) {
-        uint8_t type = uint8_t(backend_config.type);
-        if ((remaining_types & type) == 0) {
-            continue; // skip if not enabled
+        if ((_params.backend_types & uint8_t(backend_config.type)) == 0) {
+            continue;
         }
-        remaining_types &= ~type; // remember that we processed this type
         if (_next_backend == LOGGER_MAX_BACKENDS) {
-            AP_BoardConfig::config_error("Too many logger backends");
+            AP_BoardConfig::config_error("Too many backends");
             return;
         }
-
         LoggerMessageWriter_DFLogStart *message_writer =
             NEW_NOTHROW LoggerMessageWriter_DFLogStart();
         if (message_writer == nullptr)  {
@@ -275,11 +258,6 @@ void AP_Logger::init(const AP_Int32 &log_bitmask, const struct LogStructure *str
             AP_BoardConfig::allocation_error("logger backend");
         }
         _next_backend++;
-    }
-
-    if (remaining_types) { // there was a type we didn't process
-        AP_BoardConfig::config_error("Unknown logger backend");
-        return;
     }
 
     for (uint8_t i=0; i<_next_backend; i++) {
@@ -375,7 +353,7 @@ bool AP_Logger::labels_string_is_good(const char *labels) const
 {
     bool passed = true;
     if (strlen(labels) >= LS_LABELS_SIZE) {
-        Debug("Labels string too long (%u >= %u)", unsigned(strlen(labels)), unsigned(LS_LABELS_SIZE));
+        Debug("Labels string too long (%u > %u)", unsigned(strlen(labels)), unsigned(LS_LABELS_SIZE));
         passed = false;
     }
     // This goes through and slices labels up into substrings by
@@ -699,14 +677,6 @@ void AP_Logger::setVehicle_Startup_Writer(vehicle_startup_message_Writer writer)
     _vehicle_messages = writer;
 }
 
-#if AP_RTC_LOGGING_ENABLED
-// Write RTC data
-void AP_Logger::Write_RTC()
-{
-    FOR_EACH_BACKEND(Write_RTC());
-}
-#endif  // AP_RTC_LOGGING_ENABLED
-
 void AP_Logger::set_vehicle_armed(const bool armed_state)
 {
     if (armed_state == _armed) {
@@ -865,7 +835,7 @@ uint16_t AP_Logger::get_max_num_logs() {
 }
 
 /* we're started if any of the backends are started */
-bool AP_Logger::logging_started(void) const {
+bool AP_Logger::logging_started(void) {
     for (uint8_t i=0; i< _next_backend; i++) {
         if (backends[i]->logging_started()) {
             return true;
@@ -916,10 +886,6 @@ void AP_Logger::Write_Message(const char *message)
 {
     FOR_EACH_BACKEND(Write_Message(message));
 }
-void AP_Logger::Write_MessageChunk(uint8_t id, const char *messagechunk, uint8_t chunk_seq)
-{
-    FOR_EACH_BACKEND(Write_MessageChunk(id, messagechunk, chunk_seq));
-}
 
 void AP_Logger::Write_Mode(uint8_t mode, const ModeReason reason)
 {
@@ -961,7 +927,7 @@ void AP_Logger::Write_Fence()
 
 void AP_Logger::Write_NamedValueFloat(const char *name, float value)
 {
-    Write(
+    WriteStreaming(
         "NVF",
         "TimeUS,Name,Value",
         "s#-",
@@ -1382,8 +1348,8 @@ bool AP_Logger::fill_logstructure(struct LogStructure &logstruct, const uint8_t 
  * Tools/Replay/MsgHandler.cpp */
 int16_t AP_Logger::Write_calc_msg_len(const char *fmt) const
 {
-    size_t len = LOG_PACKET_HEADER_LEN;
-    for (size_t i=0; i<strlen(fmt); i++) {
+    uint8_t len =  LOG_PACKET_HEADER_LEN;
+    for (uint8_t i=0; i<strlen(fmt); i++) {
         switch(fmt[i]) {
         case 'a' : len += sizeof(int16_t[32]); break;
         case 'b' : len += sizeof(int8_t); break;
@@ -1413,10 +1379,7 @@ int16_t AP_Logger::Write_calc_msg_len(const char *fmt) const
             return -1;
         }
     }
-    if (len > LOG_PACKET_MAX_LEN) {
-        return -1;
-    }
-    return (int16_t)len;
+    return len;
 }
 
 /*
